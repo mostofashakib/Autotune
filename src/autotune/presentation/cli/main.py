@@ -19,7 +19,7 @@ from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 
 app = typer.Typer(
     name="autotune",
-    help="Autonomous AI Training & Benchmarking Engine — Plug in your data, get a frontier model out.",
+    help="LLM Post Training & Benchmarking Engine — Plug in your data, get a frontier model out",
     add_completion=False,
 )
 cloud_app = typer.Typer(

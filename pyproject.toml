@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "autotune"
 version = "0.1.0"
-description = "Autonomous AI Training & Benchmarking Engine — Plug in your data, get a frontier model out."
+description = "LLM Post Training & Benchmarking Engine — Plug in your data, get a frontier model out"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
