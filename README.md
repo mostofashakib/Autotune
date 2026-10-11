@@ -44,7 +44,20 @@ autotune/
 
 ## Quickstart
 
-### 1. Inspect a Dataset
+### 1. Interactive Web Cockpit
+Launch the full web dashboard in your browser:
+```bash
+./run.sh
+# or
+uv run autotune ui --port 7860
+```
+Open `http://localhost:7860` to access:
+- **Training Cockpit**: Drag-and-drop datasets, automatic recipe configuration, and real-time loss telemetry.
+- **RunPod Cloud**: Browse GPU availability, compare hourly pricing, and deploy cloud instances.
+- **Side-by-Side Playground**: Test prompts simultaneously on base and fine-tuned models with benchmark metrics.
+- **vLLM Serving**: One-click inference serving with an OpenAI-compatible API endpoint.
+
+### 2. Inspect a Dataset
 Inspect a dataset file to see detected task types and recommended tuning settings:
 ```bash
 uv run autotune inspect my_data.jsonl

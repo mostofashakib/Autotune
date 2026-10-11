@@ -297,6 +297,20 @@ def cloud_stop(
         raise typer.Exit(code=1)
 
 
+@app.command()
+def ui(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host interface to bind"),
+    port: int = typer.Option(7860, "--port", "-p", help="Port to bind dashboard server"),
+) -> None:
+    """Launch the Autotune interactive Web Cockpit UI."""
+    import uvicorn
+    from autotune.presentation.api.app import create_app
+
+    console.print(f"[bold cyan]Launching Autotune Web Cockpit on http://{host}:{port}...[/]")
+    app_instance = create_app()
+    uvicorn.run(app_instance, host=host, port=port, log_level="info")
+
+
 if __name__ == "__main__":
     app()
 

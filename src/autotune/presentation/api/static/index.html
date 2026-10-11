@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Autotune — LLM Post-Training & Benchmarking Engine</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <!-- Ambient background glow -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+
+  <!-- Header -->
+  <header class="navbar">
+    <div class="nav-left">
+      <div class="brand">
+        <span class="brand-icon">⚡</span>
+        <span class="brand-name">AUTOTUNE</span>
+        <span class="version-tag">v0.1.0</span>
+      </div>
+      <div class="tagline-sub">LLM Post-Training & Benchmarking Engine</div>
+    </div>
+    <div class="nav-center">
+      <nav class="nav-tabs">
+        <button class="nav-tab active" data-tab="cockpit">Training Cockpit</button>
+        <button class="nav-tab" data-tab="cloud">Cloud GPUs (RunPod)</button>
+        <button class="nav-tab" data-tab="benchmark">Benchmark & Playground</button>
+        <button class="nav-tab" data-tab="serving">vLLM Serving</button>
+      </nav>
+    </div>
+    <div class="nav-right">
+      <div class="system-pill" id="systemPill">
+        <span class="pulse-indicator"></span>
+        <span id="vramStatus">Detecting Hardware...</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-content">
+
+    <!-- 1. COCKPIT TAB -->
+    <section class="tab-pane active" id="tabCockpit">
+      <div class="hero-strip">
+        <div class="hero-copy">
+          <h1>Plug in your data, get a frontier model out.</h1>
+          <p>Autotune inspects dataset shapes, automatically assigns LoRA or 4-bit QLoRA recipes, runs training, and benchmarks improvements.</p>
+        </div>
+        <div class="quick-samples">
+          <span class="sample-label">Quick Test Datasets:</span>
+          <button class="btn-sample" id="btnSampleRL">⚡ RL / GRPO Reasoning</button>
+          <button class="btn-sample" id="btnSampleDPO">⚖️ DPO Preference</button>
+          <button class="btn-sample" id="btnSampleSFT">💬 SFT Tool-Use</button>
+        </div>
+      </div>
+
+      <div class="cockpit-grid">
+        <!-- Left: Ingestion & Recipe Config -->
+        <div class="cockpit-col">
+          <!-- Dropzone Card -->
+          <div class="card dropzone-card">
+            <div class="card-header">
+              <h2>1. Data Ingestion & Auto-Sanitization</h2>
+              <span class="badge badge-cyan">CSV • JSONL • Parquet</span>
+            </div>
+            <div class="dropzone" id="dropzone">
+              <input type="file" id="fileInput" accept=".csv,.jsonl,.parquet,.json" style="display:none;">
+              <div class="drop-icon">📂</div>
+              <div class="drop-title">Drop your dataset file here, or <span class="highlight">browse</span></div>
+              <div class="drop-hint">Automatically formats messages, prompts, chosen/rejected pairs, and tool calls</div>
+            </div>
+
+            <!-- Dataset Analysis Card (Shown once loaded) -->
+            <div class="analysis-box" id="analysisBox" style="display: none;">
+              <div class="analysis-header">
+                <span class="file-badge" id="dsFileName">dataset.jsonl</span>
+                <span class="task-badge" id="dsTaskType">RL_GRPO</span>
+              </div>
+              <div class="metrics-row">
+                <div class="metric-item">
+                  <div class="metric-label">Valid Records</div>
+                  <div class="metric-val" id="dsTotalRecords">0</div>
+                </div>
+                <div class="metric-item">
+                  <div class="metric-label">Training Split</div>
+                  <div class="metric-val" id="dsTrainSplit">0</div>
+                </div>
+                <div class="metric-item">
+                  <div class="metric-label">Validation Split</div>
+                  <div class="metric-val" id="dsValSplit">0</div>
+                </div>
+                <div class="metric-item">
+                  <div class="metric-label">Dropped / Corrupt</div>
+                  <div class="metric-val" id="dsDropped">0</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recipe Card -->
+          <div class="card recipe-card">
+            <div class="card-header">
+              <h2>2. Auto-Selected Training Recipe</h2>
+              <span class="badge badge-emerald" id="recipeConfidence">Hardware-Optimized</span>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Base Model</label>
+                <select id="recipeBaseModel" class="form-select">
+                  <option value="Qwen/Qwen2.5-7B-Instruct">Qwen/Qwen2.5-7B-Instruct (Recommended for Reasoning)</option>
+                  <option value="meta-llama/Llama-3.1-8B-Instruct">meta-llama/Llama-3.1-8B-Instruct</option>
+                  <option value="deepseek-ai/DeepSeek-R1-Distill-Qwen-7B">deepseek-ai/DeepSeek-R1-Distill-Qwen-7B</option>
+                  <option value="mistralai/Mistral-7B-Instruct-v0.3">mistralai/Mistral-7B-Instruct-v0.3</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Training Objective</label>
+                <div class="radio-pills" id="objectiveGroup">
+                  <button type="button" class="pill-btn active" data-val="grpo">GRPO (RL)</button>
+                  <button type="button" class="pill-btn" data-val="sft">SFT</button>
+                  <button type="button" class="pill-btn" data-val="dpo">DPO</button>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Quantization Method</label>
+                <div class="quant-selector">
+                  <div class="quant-card active" id="quantQlora">
+                    <div class="quant-title">QLoRA (4-bit NF4)</div>
+                    <div class="quant-desc">Uses bitsandbytes normal float. Fits 7B-14B models on 16-24GB GPUs without OOM.</div>
+                  </div>
+                  <div class="quant-card" id="quantLora">
+                    <div class="quant-title">LoRA (16-bit)</div>
+                    <div class="quant-desc">Selected on 40GB+ datacenter GPUs for maximum raw throughput.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="params-row">
+                <div class="param-item">
+                  <label>LoRA Rank (r)</label>
+                  <input type="number" id="paramLoraR" class="form-input" value="16">
+                </div>
+                <div class="param-item">
+                  <label>LoRA Alpha</label>
+                  <input type="number" id="paramLoraAlpha" class="form-input" value="32">
+                </div>
+                <div class="param-item">
+                  <label>Learning Rate</label>
+                  <input type="text" id="paramLr" class="form-input" value="2e-5">
+                </div>
+                <div class="param-item">
+                  <label>Epochs</label>
+                  <input type="number" id="paramEpochs" class="form-input" value="3">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Training Cockpit & Telemetry -->
+        <div class="cockpit-col">
+          <div class="card cockpit-action-card">
+            <div class="card-header">
+              <h2>3. Training Orchestration</h2>
+              <div class="action-toggles">
+                <label class="toggle-container">
+                  <input type="checkbox" id="checkMock" checked>
+                  <span class="toggle-slider"></span>
+                  <span class="toggle-text">Simulation Mode (Fast local test)</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="action-footer">
+              <button class="btn btn-primary" id="btnStartTraining">
+                <span class="btn-icon">🚀</span> START POST-TRAINING
+              </button>
+              <button class="btn btn-danger" id="btnCancelTraining" style="display: none;">
+                ⏹ Stop Job
+              </button>
+            </div>
+
+            <!-- Live Status & Telemetry -->
+            <div class="telemetry-panel">
+              <div class="telemetry-header">
+                <div class="tele-status">
+                  Status: <span class="status-badge status-idle" id="teleStatus">IDLE</span>
+                </div>
+                <div class="tele-steps" id="teleStepCounter">Step 0 / 50</div>
+              </div>
+
+              <!-- Progress bar -->
+              <div class="progress-track">
+                <div class="progress-bar" id="teleProgressBar" style="width: 0%;"></div>
+              </div>
+
+              <!-- Realtime Loss Curve SVG Chart -->
+              <div class="chart-container">
+                <div class="chart-header">
+                  <span>Training Loss Curve</span>
+                  <span class="current-loss" id="currentLossText">Loss: --</span>
+                </div>
+                <svg class="loss-svg" id="lossChartSvg" viewBox="0 0 500 140">
+                  <path class="loss-grid-line" d="M 0,35 L 500,35 M 0,70 L 500,70 M 0,105 L 500,105"></path>
+                  <path class="loss-path" id="lossPath" d="M 0,120"></path>
+                  <circle class="loss-point" id="lossPoint" cx="0" cy="120" r="4" style="display:none;"></circle>
+                </svg>
+              </div>
+
+              <!-- Live Terminal Logs -->
+              <div class="terminal-box">
+                <div class="terminal-title">Live Execution Stream</div>
+                <div class="terminal-logs" id="terminalLogs">
+                  <div class="log-line text-dim">Autotune engine initialized. Select a dataset and start training.</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. CLOUD GPUS TAB (RUNPOD) -->
+    <section class="tab-pane" id="tabCloud">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>RunPod On-Demand GPU Clusters</h2>
+            <div class="card-desc">Deploy fine-tuning pods on remote RTX 4090, A100, and H100 GPUs directly from Autotune.</div>
+          </div>
+          <button class="btn btn-secondary" id="btnRefreshGpus">↻ Refresh Catalog</button>
+        </div>
+
+        <div class="cloud-grid" id="gpuCatalogGrid">
+          <!-- Populated by app.js -->
+        </div>
+
+        <div class="cloud-deploy-box">
+          <h3>Active Cloud Instance</h3>
+          <div class="instance-card" id="activeInstanceCard">
+            <div class="instance-info">
+              <div class="inst-id" id="instId">No active pod deployed</div>
+              <div class="inst-details" id="instDetails">Select a GPU above to provision a dedicated instance for large-scale training.</div>
+            </div>
+            <div class="instance-actions">
+              <button class="btn btn-secondary" id="btnCopySsh" style="display:none;">Copy SSH Command</button>
+              <button class="btn btn-danger" id="btnStopInstance" style="display:none;">Terminate Pod</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. BENCHMARK & PLAYGROUND TAB -->
+    <section class="tab-pane" id="tabBenchmark">
+      <div class="card benchmark-card">
+        <div class="card-header">
+          <div>
+            <h2>Side-by-Side Model Evaluation & Proof of Improvement</h2>
+            <div class="card-desc">Verify real skill gains by pitting your fine-tuned checkpoint against the base model on held-out tasks.</div>
+          </div>
+          <button class="btn btn-primary" id="btnRunEval">▶ Run Benchmark Evaluation</button>
+        </div>
+
+        <!-- Scorecard summary -->
+        <div class="scorecard-grid">
+          <div class="score-card">
+            <div class="score-title">Pass@1 Accuracy</div>
+            <div class="score-val text-emerald" id="scorePass1">68.5%</div>
+            <div class="score-delta">+14.2% over base model</div>
+          </div>
+          <div class="score-card">
+            <div class="score-title">Pass@3 Consistency</div>
+            <div class="score-val text-cyan" id="scorePass3">84.2%</div>
+            <div class="score-delta">+18.9% over base model</div>
+          </div>
+          <div class="score-card">
+            <div class="score-title">Net Improvement</div>
+            <div class="score-val text-emerald" id="scoreNetImp">+14.8%</div>
+            <div class="score-delta">Statistically significant</div>
+          </div>
+          <div class="score-card">
+            <div class="score-title">Reward Hacking Risk</div>
+            <div class="score-val text-emerald" id="scoreHacking">LOW</div>
+            <div class="score-delta">High policy robustness</div>
+          </div>
+        </div>
+
+        <!-- Probe breakdown table -->
+        <div class="table-container">
+          <table class="probe-table">
+            <thead>
+              <tr>
+                <th>Benchmark Task Probe</th>
+                <th>Base Model Score</th>
+                <th>Trained Checkpoint Score</th>
+                <th>Improvement</th>
+                <th>Verdict</th>
+              </tr>
+            </thead>
+            <tbody id="probeTableBody">
+              <tr>
+                <td>Multi-Step Complex Reasoning</td>
+                <td>52.0%</td>
+                <td>71.0%</td>
+                <td class="text-emerald">+19.0%</td>
+                <td><span class="badge badge-emerald">PASSED</span></td>
+              </tr>
+              <tr>
+                <td>API Tool Call Formatting</td>
+                <td>64.0%</td>
+                <td>86.0%</td>
+                <td class="text-emerald">+22.0%</td>
+                <td><span class="badge badge-emerald">PASSED</span></td>
+              </tr>
+              <tr>
+                <td>Policy & Constraint Adherence</td>
+                <td>59.0%</td>
+                <td>74.0%</td>
+                <td class="text-emerald">+15.0%</td>
+                <td><span class="badge badge-emerald">PASSED</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Interactive Playground -->
+        <div class="playground-section">
+          <h3>Interactive Side-by-Side Prompt Tester</h3>
+          <div class="prompt-box">
+            <textarea id="playgroundPrompt" class="form-textarea" placeholder="Enter a prompt to compare generation behavior between base model and fine-tuned policy..."></textarea>
+            <div class="prompt-actions">
+              <button class="btn btn-secondary" id="btnTestPrompt">⚡ Run Prompt Comparison</button>
+            </div>
+          </div>
+
+          <div class="comparison-grid">
+            <div class="comparison-col">
+              <div class="comp-header">
+                <span class="comp-label">Baseline Pre-Trained Model</span>
+                <span class="badge badge-gray">meta-llama/Llama-3.1-8B-Instruct</span>
+              </div>
+              <div class="comp-body" id="compBaseOutput">
+                <em>Click 'Run Prompt Comparison' above to generate output...</em>
+              </div>
+            </div>
+            <div class="comparison-col trained-col">
+              <div class="comp-header">
+                <span class="comp-label">Autotune Fine-Tuned Checkpoint</span>
+                <span class="badge badge-emerald">Fine-Tuned Policy</span>
+              </div>
+              <div class="comp-body" id="compTrainedOutput">
+                <em>Click 'Run Prompt Comparison' above to generate output...</em>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. SERVING TAB (VLLM) -->
+    <section class="tab-pane" id="tabServing">
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2>vLLM High-Throughput Serving Engine</h2>
+            <div class="card-desc">Deploy your trained model checkpoint behind an OpenAI-compatible HTTP inference API.</div>
+          </div>
+          <button class="btn btn-primary" id="btnStartServing">▶ Launch vLLM Server</button>
+        </div>
+
+        <div class="serving-box">
+          <div class="endpoint-status-row">
+            <div class="endpoint-item">
+              <span class="endpoint-label">Endpoint URL:</span>
+              <code class="endpoint-code" id="servingUrl">http://127.0.0.1:8000/v1</code>
+            </div>
+            <div class="endpoint-item">
+              <span class="endpoint-label">Status:</span>
+              <span class="badge badge-emerald" id="servingStatus">READY TO SERVE</span>
+            </div>
+          </div>
+
+          <div class="code-snippet-box">
+            <div class="snippet-header">Python Example (OpenAI SDK)</div>
+            <pre class="snippet-code"><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:8000/v1",
+    api_key="none"
+)
+
+response = client.chat.completions.create(
+    model="autotune-model",
+    messages=[{"role": "user", "content": "Solve multi-agent conflict #42."}]
+)
+print(response.choices[0].message.content)</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

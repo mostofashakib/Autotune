@@ -52,16 +52,10 @@ ok "Environment ready."
 # ── Stop previous instances ──────────────────────────────────────────────────
 "$ROOT/kill.sh" >/dev/null 2>&1 || true
 
-log "Autotune CLI is ready. Showing available commands:"
+log "Launching Autotune Web Cockpit UI..."
 echo ""
-uv run python -m autotune.presentation.cli.main --help
-
-echo ""
-ok "Autotune is active. Run commands using: uv run autotune [inspect|train|evaluate]"
-echo -e "${BOLD}Press Ctrl+C to exit.${RESET}"
+ok "Dashboard online at: ${CYAN}http://localhost:7860${RESET}"
+echo -e "${BOLD}Press Ctrl+C to stop.${RESET}"
 echo ""
 
-# Keep alive for interactive sessions
-while true; do
-  sleep 1
-done
+exec uv run autotune ui --host 0.0.0.0 --port 7860

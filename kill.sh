@@ -37,7 +37,9 @@ kill_port() {
   fi
 }
 
+kill_port 7860 "Autotune Web Cockpit"
 kill_port 8080 "Autotune API"
+kill_port 8000 "Autotune vLLM Serving"
 kill_port 8501 "Autotune Dashboard"
 
 kill_pattern() {

@@ -42,7 +42,7 @@ class AutoFormatSanitizer(DataSanitizer):
                 continue
 
             records.append(normalized)
-            if "total_reward" in row or "per_step_rewards" in row or "rewards" in row:
+            if "total_reward" in row or "per_step_rewards" in row or "rewards" in row or "reward" in row:
                 task_type = TaskType.RL_GRPO
             elif task_type != TaskType.RL_GRPO and any("tool" in m.role for m in normalized.messages):
                 task_type = TaskType.TOOL_USE
