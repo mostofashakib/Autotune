@@ -146,3 +146,64 @@ class EvaluationReport(BaseModel):
     improvement_percentage: float
     metrics: list[EvalMetric] = Field(default_factory=list)
     summary: str = ""
+
+
+RolloutOutcome = Literal["success", "failure", "partial_success", "edge_case", "truncated"]
+
+
+class RolloutRecord(BaseModel):
+    """Graded episode rollout record for RL and advantage estimation."""
+    episode_id: str
+    env_name: str = ""
+    task_name: str = ""
+    prompt: str = ""
+    completion: str = ""
+    seed: int | None = None
+    total_reward: float = 0.0
+    per_step_rewards: list[float] = Field(default_factory=list)
+    passed: bool = False
+    outcome: RolloutOutcome = "failure"
+    steps: int = 0
+    terminated: bool = False
+    truncated: bool = False
+    invalid_actions: int = 0
+    error: str | None = None
+    behavior_model: str = ""
+    termination_reason: str = "unknown"
+    verification_results: list[dict[str, Any]] = Field(default_factory=list)
+    reward_breakdown: dict[str, Any] = Field(default_factory=dict)
+
+
+class PreferenceRecord(BaseModel):
+    """Chosen vs rejected trajectory pair for DPO alignment."""
+    task: str = ""
+    prompt: str
+    chosen: str
+    rejected: str
+    chosen_reward: float
+    rejected_reward: float
+    chosen_passed: bool = True
+    rejected_passed: bool = False
+    env_name: str = ""
+
+
+class SFTRecord(BaseModel):
+    """Supervised fine-tuning demonstration record."""
+    prompt: str
+    completion: str
+    env_name: str = ""
+    reward: float = 1.0
+    passed: bool = True
+    behavior_model: str = ""
+
+
+class EnvQualityMetrics(BaseModel):
+    """Environment quality diagnostics."""
+    env_name: str
+    state_coverage_score: float
+    reward_density: float
+    dead_end_rate: float
+    action_diversity: float
+    num_episodes: int
+    num_steps: int
+

@@ -1,12 +1,22 @@
+"""Environment quality diagnostics and metrics calculation."""
 from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-
-from forge.schema.state_schema import StateSchemaManifest
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
+
+
+class StateSchemaCoverageProvider(Protocol):
+    """Protocol for state coverage calculation."""
+
+    env_name: str
+
+    def coverage_score(self, state: dict[str, Any]) -> float:
+        ...
 
 
 @dataclass
@@ -22,7 +32,7 @@ class EnvQualityMetrics:
 
 def compute_env_quality(
     episode_dir: Path,
-    manifest: StateSchemaManifest,
+    manifest: StateSchemaCoverageProvider,
 ) -> EnvQualityMetrics:
     """Compute quality metrics from JSONL episode files in episode_dir."""
     jsonl_files = list(episode_dir.rglob("*.jsonl"))

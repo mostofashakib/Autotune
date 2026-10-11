@@ -1,12 +1,10 @@
-"""Loaders read the exact export-writer formats and reject malformed files."""
+"""Dataset loader tests for rollouts and preference pairs."""
 from __future__ import annotations
 
 import json
-
 import pandas as pd
 import pytest
-
-from forge.training.dataset import (
+from autotune.infrastructure.sanitizers.dataset_loader import (
     MalformedExportError,
     load_preferences,
     load_rollouts,
@@ -19,16 +17,28 @@ def _write_rollouts(path, rows):
 
 def test_load_rollouts_round_trips_grpo_parquet(tmp_path):
     path = tmp_path / "grpo_rollouts.parquet"
-    _write_rollouts(path, [{
-        "episode_id": "ep1", "env_name": "e", "task_name": "t", "seed": 0,
-        "agent_id": "random", "prompt": "Task: t", "completion": "$ ls",
-        "total_reward": 0.8, "passed": True, "total_steps": 3,
-        "per_step_rewards": json.dumps([0.1, 0.3, 0.4]),
-        "behavior_model": "vllm:model",
-        "termination_reason": "submitted",
-        "verification_results": json.dumps([{"passed": True}]),
-        "reward_breakdown": json.dumps({"total_reward": 0.8}),
-    }])
+    _write_rollouts(
+        path,
+        [
+            {
+                "episode_id": "ep1",
+                "env_name": "e",
+                "task_name": "t",
+                "seed": 0,
+                "agent_id": "random",
+                "prompt": "Task: t",
+                "completion": "$ ls",
+                "total_reward": 0.8,
+                "passed": True,
+                "total_steps": 3,
+                "per_step_rewards": json.dumps([0.1, 0.3, 0.4]),
+                "behavior_model": "vllm:model",
+                "termination_reason": "submitted",
+                "verification_results": json.dumps([{"passed": True}]),
+                "reward_breakdown": json.dumps({"total_reward": 0.8}),
+            }
+        ],
+    )
     records = load_rollouts(path)
     assert len(records) == 1
     r = records[0]
@@ -59,8 +69,11 @@ def test_load_preferences_parses_chosen_rejected(tmp_path):
             {"role": "user", "content": "Task: t"},
             {"role": "assistant", "content": "$ bad"},
         ],
-        "chosen_reward": 1.0, "rejected_reward": 0.0,
-        "task": "t", "chosen_passed": True, "rejected_passed": False,
+        "chosen_reward": 1.0,
+        "rejected_reward": 0.0,
+        "task": "t",
+        "chosen_passed": True,
+        "rejected_passed": False,
     }
     path.write_text(json.dumps(record) + "\n")
     prefs = load_preferences(path)
@@ -73,6 +86,6 @@ def test_load_preferences_parses_chosen_rejected(tmp_path):
 
 def test_load_preferences_rejects_malformed_line(tmp_path):
     path = tmp_path / "preference_pairs.jsonl"
-    path.write_text('{"chosen": [], "rejected": []}\n')  # missing rewards
+    path.write_text('{"chosen": [], "rejected": []}\n')
     with pytest.raises(MalformedExportError):
         load_preferences(path)

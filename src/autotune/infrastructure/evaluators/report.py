@@ -1,11 +1,13 @@
+"""Benchmark reporting and summary export utilities."""
 from __future__ import annotations
+
 import csv
 import json
 import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from forge.benchmark.env_quality import EnvQualityMetrics
+from autotune.infrastructure.evaluators.env_quality import EnvQualityMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,8 @@ class ReportConfig:
 
 
 class BenchmarkReport:
+    """Aggregates and exports benchmark evaluation summaries and CSVs."""
+
     def __init__(self, config: ReportConfig) -> None:
         self._cfg = config
         self._cfg.output_dir.mkdir(parents=True, exist_ok=True)
@@ -24,13 +28,11 @@ class BenchmarkReport:
     def write_env_quality(self, metrics: list[EnvQualityMetrics]) -> None:
         out = self._cfg.output_dir
 
-        # summary.json
         summary = {
             "env_quality": [asdict(m) for m in metrics]
         }
         (out / "summary.json").write_text(json.dumps(summary, indent=2))
 
-        # env_quality.csv
         csv_path = out / "env_quality.csv"
         fieldnames = [
             "env_name", "state_coverage_score", "reward_density",

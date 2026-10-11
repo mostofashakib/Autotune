@@ -26,15 +26,16 @@ Works directly with [Forge](https://github.com/mostofashakib/Forge) for executio
 ```
 autotune/
 ├── core/
-│   ├── domain/          # Pure entities: TrainingJob, CleanedDataset, Recipe, EvalReport, ServingEndpoint, RunPodConfig
-│   ├── ports/           # Interface protocols (TrainingBackend, ServingProvider, CloudComputeProvider)
+│   ├── domain/          # Entities: Recipe, RolloutRecord, PreferenceRecord, ServingEndpoint, RunPodConfig
+│   ├── ports/           # Interface protocols (TrainingBackend, ServingProvider, CloudComputeProvider, Storage)
 │   └── services/        # Hardware-aware AutoRecipeSelector (LoRA vs QLoRA, GRPO)
 ├── infrastructure/
-│   ├── backends/        # TrlPeftBackend (SFT, DPO, GRPO via TRL + PEFT) and MockTrainingBackend
-│   ├── sanitizers/      # AutoFormatSanitizer (CSV, JSONL, Parquet)
+│   ├── backends/        # TrlPeftBackend, MockTrainingBackend, and reward mapping (GRPO, DPO, SFT)
+│   ├── sanitizers/      # AutoFormatSanitizer and dataset loaders (Parquet, JSONL, CSV)
+│   ├── storage/         # PolicyCheckpoint serialization and manifest management
 │   ├── serving/         # VLLMServingProvider (OpenAI-compatible inference server)
 │   ├── cloud/           # RunPodCloudProvider (GraphQL remote GPU lifecycle)
-│   └── evaluators/      # SideBySideEvaluator
+│   └── evaluators/      # SideBySideEvaluator, BenchmarkReport, and metrics (pass@k, Cohen's kappa)
 └── presentation/
     └── cli/             # Typer CLI commands (inspect, train, serve, evaluate, cloud)
 ```

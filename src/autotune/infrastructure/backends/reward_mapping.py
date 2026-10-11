@@ -1,25 +1,10 @@
-"""Map the verifiers' graded rewards onto a training signal.
-
-This is the reproducible bridge between how a trajectory was *graded* and how it
-is *learned from*:
-
-- **GRPO** — group rollouts that share a prompt and standardize their episode
-  rewards into group-relative advantages ``(r - mean) / (std + eps)``. A group
-  whose rollouts all scored the same (or a lone rollout) has no relative signal
-  and contributes nothing, so an all-equal graded set produces no update.
-- **DPO** — a preference pair is a usable label only when the chosen trajectory
-  was graded strictly higher than the rejected one; ties and inversions are
-  dropped.
-
-The mapping is a pure function of the exported rewards, so the training signal is
-deterministic and matches the grades the rollouts were exported with.
-"""
+"""Map verifiers' graded rewards onto mathematical training signals for GRPO, DPO, and SFT."""
 from __future__ import annotations
 
 from dataclasses import dataclass
 from statistics import pstdev
 
-from forge.training.dataset import PreferenceRecord, RolloutRecord
+from autotune.core.domain.models import PreferenceRecord, RolloutRecord
 
 _EPS = 1e-6
 
@@ -63,13 +48,15 @@ def grpo_advantages(rollouts: list[RolloutRecord], eps: float = _EPS) -> list[GR
             continue  # every rollout scored the same — nothing to learn
         mean = sum(rewards) / len(rewards)
         for r in group:
-            examples.append(GRPOExample(
-                prompt=prompt,
-                completion=r.completion,
-                reward=r.total_reward,
-                advantage=(r.total_reward - mean) / (spread + eps),
-                behavior_model=r.behavior_model,
-            ))
+            examples.append(
+                GRPOExample(
+                    prompt=prompt,
+                    completion=r.completion,
+                    reward=r.total_reward,
+                    advantage=(r.total_reward - mean) / (spread + eps),
+                    behavior_model=r.behavior_model,
+                )
+            )
     return examples
 
 
