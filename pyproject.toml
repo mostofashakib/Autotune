@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "autotune"
+version = "0.1.0"
+description = "Autonomous AI Training & Benchmarking Engine — Plug in your data, get a frontier model out."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "pandas>=2.0.0",
+    "pyarrow>=15.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.24.0",
+]
+training = [
+    "torch>=2.2.0",
+    "transformers>=4.44.0",
+    "peft>=0.12.0",
+    "trl>=0.11.0",
+    "bitsandbytes>=0.43.0",
+    "datasets>=3.0.0",
+    "accelerate>=0.33.0",
+]
+
+[project.scripts]
+autotune = "autotune.presentation.cli.main:app"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+asyncio_mode = "auto"
+pythonpath = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autotune"]
