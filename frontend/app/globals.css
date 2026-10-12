@@ -71,8 +71,8 @@
   }
   .brand-mark:hover .brand-mark__icon { transform: rotate(-4deg) scale(1.04); }
   .brand-mark__icon svg { @apply size-7; }
-  .brand-mark__word { @apply block text-base font-black leading-none tracking-[0.32em]; }
-  .app-nav { @apply ml-auto flex h-full items-stretch overflow-x-auto; }
+  .brand-mark__word { @apply hidden text-base font-black leading-none tracking-[0.32em] sm:block; }
+  .app-nav { @apply ml-auto flex h-full min-w-0 items-stretch overflow-x-auto; }
   .app-nav__label { @apply sr-only lg:not-sr-only; }
   .app-nav__link {
     @apply relative flex items-center gap-2 px-3 text-[0.7rem] font-medium uppercase tracking-[0.12em] text-white/55 transition-colors lg:px-5;
@@ -92,7 +92,8 @@
     @apply relative grid overflow-hidden border border-foreground/75 bg-card md:grid-cols-[1fr_auto];
     box-shadow: 7px 7px 0 oklch(0.20 0.02 62 / 0.15);
   }
-  .page-hero__copy { @apply relative p-6 sm:p-8; }
+  .page-hero__copy { @apply relative min-w-0 p-6 sm:p-8; }
+  .page-hero__eyebrow, .page-hero h1, .page-hero__copy p { overflow-wrap: anywhere; }
   .page-hero__eyebrow { @apply font-mono text-[0.56rem] font-semibold uppercase tracking-[0.22em] text-primary; }
   .page-hero__eyebrow a { @apply underline-offset-4 hover:underline; }
   .page-hero h1 { @apply mt-4 text-[clamp(2rem,4.5vw,4.2rem)] font-semibold leading-[0.85] tracking-[-0.06em]; }
@@ -100,11 +101,12 @@
   .page-hero__copy p { @apply mt-5 max-w-xl text-sm leading-6 text-muted-foreground; }
   .readout { @apply grid grid-cols-2 border-t border-foreground/25 bg-foreground text-background md:w-80 md:border-l md:border-t-0; }
   .readout > div { @apply flex min-h-24 flex-col justify-between gap-2 border-b border-r border-background/15 p-4 even:border-r-0; }
-  .readout span { @apply font-mono text-[0.5rem] uppercase tracking-[0.16em] text-background/45; }
+  .readout > div > span { @apply font-mono text-[0.5rem] uppercase tracking-[0.16em] text-background/45; }
   .readout strong { @apply break-all font-mono text-lg font-medium; }
 
   /* Panels and forms */
   .grid-2 { @apply grid items-start gap-5 xl:grid-cols-2; }
+  .grid-2 > *, .field-row > *, .field-row--3 > * { @apply min-w-0; }
   .panel { @apply border border-foreground/30 bg-card; box-shadow: 5px 5px 0 oklch(0.20 0.02 62 / 0.12); }
   .panel__heading { @apply flex items-center justify-between gap-3 border-b border-foreground/25 px-5 py-4; }
   .panel__heading > div { @apply flex items-center gap-3; }
@@ -180,7 +182,7 @@
   /* Key-value grid */
   .facts { @apply grid grid-cols-2 gap-px bg-foreground/15 sm:grid-cols-4; }
   .facts > div { @apply flex flex-col gap-1 bg-card p-4; }
-  .facts span { @apply font-mono text-[0.5rem] uppercase tracking-[0.16em] text-muted-foreground; }
+  .facts > div > span { @apply font-mono text-[0.5rem] uppercase tracking-[0.16em] text-muted-foreground; }
   .facts strong { @apply break-all font-mono text-sm font-medium; }
 
   /* Playground */
