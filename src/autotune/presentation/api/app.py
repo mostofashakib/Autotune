@@ -23,17 +23,17 @@ from autotune.core.domain.models import (
     JobStatus,
     ModelEndpoint,
     QuantizationMethod,
-    Recipe,
     RunPodConfig,
     TaskType,
     TrainingJob,
     TrainingObjective,
+    TrainingProgress,
 )
 from autotune.core.services.recipe_selector import AutoRecipeSelector
-from autotune.infrastructure.backends.mock_backend import MockTrainingBackend
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.core.ports.evaluator import BenchmarkRunner
+from autotune.core.ports.trainer import TrainingBackend
 from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
 from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmark
 from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark, HarborError
@@ -65,8 +65,24 @@ class TrainingStartRequest(BaseModel):
     learning_rate: Optional[float] = 2e-4
     epochs: Optional[int] = 3
     batch_size: Optional[int] = 2
-    mock: bool = True
     output_dir: str = "./checkpoints/ui-model"
+
+
+def build_training_backend() -> TrainingBackend:
+    """The backend that trains for real. Its missing dependencies or GPU fail the job."""
+    return TrlPeftBackend()
+
+
+def _resolve_dataset(name: str) -> Path:
+    """The dataset path, also looking where samples and uploads are written."""
+    for candidate in (
+        Path(name),
+        Path(tempfile.gettempdir()) / "autotune_samples" / name,
+        Path(tempfile.gettempdir()) / "autotune_uploads" / name,
+    ):
+        if candidate.is_file():
+            return candidate
+    raise HTTPException(status_code=422, detail=f"dataset {name!r} was not found")
 
 
 class BenchmarkRequest(BaseModel):
@@ -259,95 +275,63 @@ def create_app() -> FastAPI:
             ],
         }
 
-    @app.post("/api/training/start")
+    @app.post("/api/training/start", status_code=202)
     async def start_training(req: TrainingStartRequest) -> dict[str, Any]:
-        job_id = f"job_{int(time.time())}"
-        dataset_path = Path(req.dataset_name)
-
-        if not dataset_path.exists():
-            # If dataset name was provided as sample or relative, check temp
-            temp_path = Path(tempfile.gettempdir()) / "autotune_samples" / req.dataset_name
-            if temp_path.exists():
-                dataset_path = temp_path
-            else:
-                upload_path = Path(tempfile.gettempdir()) / "autotune_uploads" / req.dataset_name
-                if upload_path.exists():
-                    dataset_path = upload_path
-
-        sanitizer = AutoFormatSanitizer()
+        dataset_path = _resolve_dataset(req.dataset_name)
         try:
-            cleaned = sanitizer.sanitize(dataset_path) if dataset_path.exists() else None
-        except Exception:
-            cleaned = None
-
-        recipe = Recipe(
-            base_model=req.base_model or "Qwen/Qwen2.5-7B-Instruct",
-            objective=TrainingObjective(req.objective.lower()) if req.objective else TrainingObjective.SFT,
-            quantization=QuantizationMethod(req.quantization) if req.quantization else QuantizationMethod.QLORA_4BIT_NF4,
-            lora_r=req.lora_r or 16,
-            lora_alpha=req.lora_alpha or 32,
-            learning_rate=req.learning_rate or 2e-4,
-            epochs=req.epochs or 3,
-            batch_size=req.batch_size or 2,
-        )
-
-        job = TrainingJob(
-            id=job_id,
-            dataset_path=str(dataset_path),
-            output_dir=req.output_dir,
-            recipe=recipe,
-            status=JobStatus.RUNNING,
-        )
-
-        _JOBS[job_id] = {
-            "job_id": job_id,
-            "status": "running",
-            "progress_percent": 5,
-            "current_step": 1,
-            "total_steps": 50,
-            "current_loss": 2.45,
-            "loss_history": [2.45],
-            "logs": [f"Initialized training pipeline for {recipe.base_model}", f"Objective: {recipe.objective.value.upper()} | Quantization: {recipe.quantization.value}"],
-            "checkpoint_dir": req.output_dir,
-            "error": None,
+            cleaned = AutoFormatSanitizer().sanitize(dataset_path)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"could not parse dataset: {exc}") from exc
+        recipe = AutoRecipeSelector().select_recipe(
+            cleaned,
+            forced_model=req.base_model,
+            forced_quantization=QuantizationMethod(req.quantization) if req.quantization else None,
+            forced_objective=TrainingObjective(req.objective.lower()) if req.objective else None,
+        ).model_copy(update={
+            key: value for key, value in {
+                "lora_r": req.lora_r, "lora_alpha": req.lora_alpha, "learning_rate": req.learning_rate,
+                "epochs": req.epochs, "batch_size": req.batch_size,
+            }.items() if value is not None
+        })
+        job_id = f"job_{uuid.uuid4().hex[:12]}"
+        job = TrainingJob(id=job_id, dataset_path=str(dataset_path), output_dir=req.output_dir, recipe=recipe, status=JobStatus.RUNNING)
+        backend = build_training_backend()
+        state: dict[str, Any] = {
+            "job_id": job_id, "status": "running", "progress_percent": 0,
+            "current_step": 0, "total_steps": None, "current_loss": None, "loss_history": [],
+            "logs": [
+                f"Training {recipe.base_model} on {cleaned.total_records} records",
+                f"Objective: {recipe.objective.value.upper()} | Quantization: {recipe.quantization.value}",
+            ],
+            "checkpoint_dir": None, "error": None, "backend": backend,
         }
+        _JOBS[job_id] = state
 
-        def run_worker():
-            total = 50
-            for step in range(1, total + 1):
-                if _JOBS.get(job_id, {}).get("status") == "cancelled":
-                    break
-                time.sleep(0.1 if req.mock else 0.5)
-                # Synthetic realistic exponential loss decay
-                loss = max(0.24, round(2.45 * (0.95 ** step) + 0.05 * (step % 2), 4))
-                progress = int((step / total) * 100)
-                _JOBS[job_id]["current_step"] = step
-                _JOBS[job_id]["progress_percent"] = progress
-                _JOBS[job_id]["current_loss"] = loss
-                _JOBS[job_id]["loss_history"].append(loss)
-                if step % 10 == 0 or step == total:
-                    _JOBS[job_id]["logs"].append(f"Step {step}/{total} — Loss: {loss:.4f} — VRAM: 14.2 GB")
+        def record(progress: TrainingProgress) -> None:
+            state["current_step"], state["total_steps"] = progress.step, progress.total_steps
+            if progress.total_steps:
+                state["progress_percent"] = min(100, int(progress.step * 100 / progress.total_steps))
+            if progress.loss is not None:
+                state["current_loss"] = progress.loss
+                state["loss_history"].append(progress.loss)
+                state["logs"].append(f"Step {progress.step}/{progress.total_steps}: loss {progress.loss:.4f}")
 
-            if _JOBS.get(job_id, {}).get("status") != "cancelled":
-                _JOBS[job_id]["status"] = "completed"
-                _JOBS[job_id]["progress_percent"] = 100
-                _JOBS[job_id]["logs"].append(f"Training completed successfully. Checkpoint persisted to {req.output_dir}")
+        def run_worker() -> None:
+            try:
+                result = backend.train(job, cleaned, on_progress=record)
+            except Exception as exc:
+                logger.exception("training job %s failed", job_id)
+                state.update(status="failed", error=str(exc))
+                state["logs"].append(f"Training failed: {exc}")
+                return
+            if result.status == JobStatus.CANCELLED:
+                state["status"] = "cancelled"
+                state["logs"].append("Training stopped after the cancel request.")
+                return
+            state.update(status="completed", progress_percent=100, checkpoint_dir=result.checkpoint_dir)
+            state["logs"].append(f"Training completed. Checkpoint saved to {result.checkpoint_dir}")
 
-                # Save metadata
-                out_path = Path(req.output_dir)
-                out_path.mkdir(parents=True, exist_ok=True)
-                (out_path / "autotune_meta.json").write_text(
-                    json.dumps({
-                        "job_id": job_id,
-                        "base_model": recipe.base_model,
-                        "objective": recipe.objective.value,
-                        "final_loss": _JOBS[job_id]["current_loss"],
-                    })
-                )
-
-        thread = threading.Thread(target=run_worker, daemon=True)
-        thread.start()
-
+        threading.Thread(target=run_worker, daemon=True).start()
         return {"job_id": job_id, "status": "running"}
 
     @app.get("/api/training/status/{job_id}")
@@ -355,15 +339,16 @@ def create_app() -> FastAPI:
         job_data = _JOBS.get(job_id)
         if not job_data:
             raise HTTPException(status_code=404, detail="Job not found")
-        return job_data
+        return {key: value for key, value in job_data.items() if key != "backend"}
 
     @app.post("/api/training/cancel/{job_id}")
     async def cancel_training(job_id: str) -> dict[str, Any]:
-        if job_id in _JOBS:
-            _JOBS[job_id]["status"] = "cancelled"
-            _JOBS[job_id]["logs"].append("Training cancelled by user request.")
-            return {"status": "cancelled"}
-        raise HTTPException(status_code=404, detail="Job not found")
+        job = _JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job["backend"].cancel(job_id)
+        job["logs"].append("Cancel requested. The trainer stops at its next step.")
+        return {"status": "cancelling"}
 
     @app.post("/api/benchmark", status_code=202)
     async def start_benchmark(req: BenchmarkRequest) -> dict[str, Any]:

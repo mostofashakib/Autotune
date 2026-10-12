@@ -38,29 +38,6 @@ def test_load_sample_dataset(client):
     assert data["recipe"]["objective"] == "grpo"
 
 
-def test_training_flow(client):
-    # 1. Start a mock training run
-    start_payload = {
-        "dataset_name": "sample_rl_grpo.jsonl",
-        "base_model": "Qwen/Qwen2.5-7B-Instruct",
-        "objective": "grpo",
-        "quantization": "qlora_4bit_nf4",
-        "mock": True,
-        "output_dir": "./checkpoints/test-ui-model",
-    }
-    start_res = client.post("/api/training/start", json=start_payload)
-    assert start_res.status_code == 200
-    job_id = start_res.json()["job_id"]
-    assert job_id.startswith("job_")
-
-    # 2. Check status
-    status_res = client.get(f"/api/training/status/{job_id}")
-    assert status_res.status_code == 200
-    status_data = status_res.json()
-    assert status_data["status"] in ("running", "completed")
-    assert "loss_history" in status_data
-
-
 def test_playground_generate(client):
     payload = {"prompt": "Solve optimization task #1", "model_type": "trained"}
     response = client.post("/api/playground/generate", json=payload)

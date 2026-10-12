@@ -15,7 +15,7 @@ class MockTrainingBackend(TrainingBackend):
         self.step_duration = step_duration
         self._cancelled_jobs: set[str] = set()
 
-    def train(self, job: TrainingJob, dataset: CleanedDataset) -> CheckpointResult:
+    def train(self, job: TrainingJob, dataset: CleanedDataset, on_progress=None) -> CheckpointResult:
         out_dir = Path(job.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 

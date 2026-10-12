@@ -52,7 +52,6 @@ document.addEventListener("DOMContentLoaded", () => {
   // Training elements
   const btnStartTraining = document.getElementById("btnStartTraining");
   const btnCancelTraining = document.getElementById("btnCancelTraining");
-  const checkMock = document.getElementById("checkMock");
   const teleStatus = document.getElementById("teleStatus");
   const teleStepCounter = document.getElementById("teleStepCounter");
   const teleProgressBar = document.getElementById("teleProgressBar");
@@ -257,7 +256,6 @@ document.addEventListener("DOMContentLoaded", () => {
         lora_alpha: parseInt(paramLoraAlpha.value) || 32,
         learning_rate: parseFloat(paramLr.value) || 2e-4,
         epochs: parseInt(paramEpochs.value) || 3,
-        mock: checkMock.checked,
       };
 
       const res = await fetch("/api/training/start", {
@@ -266,6 +264,9 @@ document.addEventListener("DOMContentLoaded", () => {
         body: json_payload(payload),
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+      }
       state.currentJobId = data.job_id;
 
       startPollingJob(data.job_id);
@@ -285,12 +286,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!state.currentJobId) return;
     try {
       await fetch(`/api/training/cancel/${state.currentJobId}`, { method: "POST" });
-      clearInterval(state.trainingPollTimer);
-      teleStatus.textContent = "CANCELLED";
-      teleStatus.className = "status-badge status-idle";
-      btnStartTraining.disabled = false;
-      btnCancelTraining.style.display = "none";
-      logMessage("Training run was halted by user.");
+      teleStatus.textContent = "CANCELLING";
+      logMessage("Cancel requested. The trainer stops at its next step.");
     } catch (err) {
       logMessage(`Cancel error: ${err.message}`);
     }
@@ -304,9 +301,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const res = await fetch(`/api/training/status/${jobId}`);
         const data = await res.json();
 
-        teleStepCounter.textContent = `Step ${data.current_step} / ${data.total_steps}`;
+        teleStepCounter.textContent = `Step ${data.current_step} / ${data.total_steps ?? "?"}`;
         teleProgressBar.style.width = `${data.progress_percent}%`;
-        currentLossText.textContent = `Loss: ${data.current_loss.toFixed(4)}`;
+        currentLossText.textContent = data.current_loss === null ? "Loss: not logged yet" : `Loss: ${data.current_loss.toFixed(4)}`;
 
         // Update SVG loss chart
         if (data.loss_history && data.loss_history.length > 0) {
@@ -315,7 +312,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Update logs
         if (data.logs && data.logs.length > 0) {
-          terminalLogs.innerHTML = data.logs.map((l) => `<div class="log-line">${l}</div>`).join("");
+          terminalLogs.innerHTML = data.logs.map((l) => `<div class="log-line">${escapeHtml(l)}</div>`).join("");
           terminalLogs.scrollTop = terminalLogs.scrollHeight;
         }
 
@@ -326,6 +323,13 @@ document.addEventListener("DOMContentLoaded", () => {
           btnStartTraining.disabled = false;
           btnCancelTraining.style.display = "none";
           logMessage("✓ Training finished! Model checkpoint ready for side-by-side evaluation.");
+        } else if (data.status === "failed" || data.status === "cancelled") {
+          clearInterval(state.trainingPollTimer);
+          teleStatus.textContent = data.status.toUpperCase();
+          teleStatus.className = "status-badge status-idle";
+          btnStartTraining.disabled = false;
+          btnCancelTraining.style.display = "none";
+          if (data.error) logMessage(`Training failed: ${data.error}`);
         }
       } catch (err) {
         console.error("Polling error:", err);

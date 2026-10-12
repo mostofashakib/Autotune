@@ -12,8 +12,9 @@ from autotune.core.domain.models import (
     JobStatus,
     QuantizationMethod,
     TrainingJob,
+    TrainingProgress,
 )
-from autotune.core.ports.trainer import TrainingBackend
+from autotune.core.ports.trainer import ProgressCallback, TrainingBackend
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +24,14 @@ class TrlPeftBackend(TrainingBackend):
 
     def __init__(self) -> None:
         self._active_trainers: dict[str, Any] = {}
+        self._cancelled: set[str] = set()
 
-    def train(self, job: TrainingJob, dataset: CleanedDataset) -> CheckpointResult:
+    def train(
+        self, job: TrainingJob, dataset: CleanedDataset, on_progress: ProgressCallback | None = None,
+    ) -> CheckpointResult:
         try:
             import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
         except ImportError as exc:
             raise RuntimeError(
@@ -161,8 +165,13 @@ class TrlPeftBackend(TrainingBackend):
                 args=training_args,
             )
 
+        if on_progress is not None:
+            trainer.add_callback(_progress_reporter(TrainerCallback, on_progress))
         self._active_trainers[job.id] = trainer
-        train_output = trainer.train()
+        try:
+            train_output = trainer.train()
+        finally:
+            self._active_trainers.pop(job.id, None)
 
         # 6. Save Adapter Checkpoint & Tokenizer
         model.save_pretrained(str(out_dir))
@@ -183,11 +192,32 @@ class TrlPeftBackend(TrainingBackend):
             checkpoint_dir=str(out_dir),
             final_loss=train_output.training_loss,
             total_steps=train_output.global_step,
-            status=JobStatus.COMPLETED,
+            status=JobStatus.CANCELLED if job.id in self._cancelled else JobStatus.COMPLETED,
         )
 
     def cancel(self, job_id: str) -> None:
+        self._cancelled.add(job_id)
         trainer = self._active_trainers.get(job_id)
         if trainer is not None:
             # Signal stop to trainer
             trainer.control.should_training_stop = True
+
+
+def progress_from_log(step: int, total_steps: int, logs: dict[str, Any]) -> TrainingProgress | None:
+    """A progress update for a trainer log entry that carries a training loss, else None."""
+    loss = logs.get("loss")
+    if isinstance(loss, bool) or not isinstance(loss, (int, float)):
+        return None
+    return TrainingProgress(step=step, total_steps=total_steps, loss=float(loss))
+
+
+def _progress_reporter(base: type, on_progress: ProgressCallback) -> Any:
+    """A transformers TrainerCallback (built from the lazily imported base) that forwards loss logs."""
+
+    class ProgressReporter(base):  # type: ignore[misc, valid-type]
+        def on_log(self, args, state, control, logs=None, **kwargs):  # noqa: ANN001
+            update = progress_from_log(state.global_step, state.max_steps, logs or {})
+            if update is not None:
+                on_progress(update)
+
+    return ProgressReporter()

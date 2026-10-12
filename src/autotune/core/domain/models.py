@@ -120,6 +120,13 @@ class TrainingJob(BaseModel):
     error: str | None = None
 
 
+class TrainingProgress(BaseModel):
+    """One progress report from a running trainer, as the trainer logged it."""
+    step: int
+    total_steps: int
+    loss: float | None = None
+
+
 class CheckpointResult(BaseModel):
     job_id: str
     checkpoint_dir: str
