@@ -7,6 +7,7 @@ import logging
 import tempfile
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any, Literal, Optional
@@ -41,17 +42,14 @@ from autotune.infrastructure.evaluators.openai_client import ModelCallError, Ope
 from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
-from autotune.settings import CredentialNotConfigured, export_configured_credentials
+from autotune.infrastructure.storage.job_store import JobStore
+from autotune.settings import CredentialNotConfigured, data_dir, export_configured_credentials
 
 logger = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-# In-memory training job tracker
-_JOBS: dict[str, dict[str, Any]] = {}
 _ACTIVE_SERVING: Optional[VLLMServingProvider] = None
-# In-memory benchmark job tracker
-_BENCHMARKS: dict[str, dict[str, Any]] = {}
 _BENCHMARK_FAILURES = (ModelCallError, JudgeError, HarborError, MalformedExportError, ValueError, OSError)
 
 
@@ -77,6 +75,34 @@ def _runpod_call(call: Callable[[], Any]) -> Any:
     except (RuntimeError, ConnectionError, ValueError) as exc:
         logger.warning("RunPod request failed: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+# Live-only keys never reach the job store or the API.
+_LIVE_KEYS = {"backend"}
+# The run list leaves out what only the detail view needs.
+_DETAIL_KEYS = {"logs", "loss_history", "report"}
+
+
+def _public(state: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in state.items() if key not in _LIVE_KEYS}
+
+
+def _summary(record: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in record.items() if key not in _DETAIL_KEYS}
+
+
+def _benchmark_summary(record: dict[str, Any]) -> dict[str, Any]:
+    report = record.get("report")
+    headline = None if report is None else {
+        "base_pass_at_1": report["base"]["pass_at_1"],
+        "trained_pass_at_1": report["trained"]["pass_at_1"],
+        "delta_pass_at_1": report["delta_pass_at_1"],
+    }
+    return {**_summary(record), "headline": headline}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def build_training_backend() -> TrainingBackend:
@@ -155,6 +181,22 @@ class RunPodLaunchRequest(BaseModel):
 def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
     export_configured_credentials()
+    store = JobStore(data_dir() / "autotune.db")
+    for kind in ("training", "benchmark"):
+        store.mark_interrupted(kind)
+    # Live runs started by this server. Finished and earlier runs are read from the store.
+    jobs: dict[str, dict[str, Any]] = {}
+    benchmarks: dict[str, dict[str, Any]] = {}
+    # Workers and requests both change a run's state. Changes and saves take turns.
+    state_lock = threading.Lock()
+
+    def save_training(state: dict[str, Any]) -> None:
+        with state_lock:
+            store.save("training", state["job_id"], _public(state))
+
+    def save_benchmark(job: dict[str, Any]) -> None:
+        store.save("benchmark", job["job_id"], job)
+
     app = FastAPI(
         title="Autotune Web Cockpit",
         description="LLM Post-Training & Benchmarking Dashboard",
@@ -317,7 +359,9 @@ def create_app() -> FastAPI:
         job = TrainingJob(id=job_id, dataset_path=str(dataset_path), output_dir=req.output_dir, recipe=recipe, status=JobStatus.RUNNING)
         backend = build_training_backend()
         state: dict[str, Any] = {
-            "job_id": job_id, "status": "running", "progress_percent": 0,
+            "job_id": job_id, "status": "running", "created_at": _now(),
+            "dataset_name": dataset_path.name, "base_model": recipe.base_model,
+            "objective": recipe.objective.value, "output_dir": req.output_dir, "progress_percent": 0,
             "current_step": 0, "total_steps": None, "current_loss": None, "loss_history": [],
             "logs": [
                 f"Training {recipe.base_model} on {cleaned.total_records} records",
@@ -325,49 +369,67 @@ def create_app() -> FastAPI:
             ],
             "checkpoint_dir": None, "error": None, "backend": backend,
         }
-        _JOBS[job_id] = state
+        jobs[job_id] = state
+        save_training(state)
 
         def record(progress: TrainingProgress) -> None:
-            state["current_step"], state["total_steps"] = progress.step, progress.total_steps
-            if progress.total_steps:
-                state["progress_percent"] = min(100, int(progress.step * 100 / progress.total_steps))
-            if progress.loss is not None:
-                state["current_loss"] = progress.loss
-                state["loss_history"].append(progress.loss)
-                state["logs"].append(f"Step {progress.step}/{progress.total_steps}: loss {progress.loss:.4f}")
+            with state_lock:
+                state["current_step"], state["total_steps"] = progress.step, progress.total_steps
+                if progress.total_steps:
+                    state["progress_percent"] = min(100, int(progress.step * 100 / progress.total_steps))
+                if progress.loss is not None:
+                    state["current_loss"] = progress.loss
+                    state["loss_history"].append(progress.loss)
+                    state["logs"].append(f"Step {progress.step}/{progress.total_steps}: loss {progress.loss:.4f}")
+            save_training(state)
 
         def run_worker() -> None:
             try:
                 result = backend.train(job, cleaned, on_progress=record)
             except Exception as exc:
                 logger.exception("training job %s failed", job_id)
-                state.update(status="failed", error=str(exc))
-                state["logs"].append(f"Training failed: {exc}")
-                return
-            if result.status == JobStatus.CANCELLED:
-                state["status"] = "cancelled"
-                state["logs"].append("Training stopped after the cancel request.")
-                return
-            state.update(status="completed", progress_percent=100, checkpoint_dir=result.checkpoint_dir)
-            state["logs"].append(f"Training completed. Checkpoint saved to {result.checkpoint_dir}")
+                with state_lock:
+                    state.update(status="failed", error=str(exc))
+                    state["logs"].append(f"Training failed: {exc}")
+            else:
+                with state_lock:
+                    if result.status == JobStatus.CANCELLED:
+                        state["status"] = "cancelled"
+                        state["logs"].append("Training stopped after the cancel request.")
+                    else:
+                        state.update(status="completed", progress_percent=100, checkpoint_dir=result.checkpoint_dir)
+                        state["logs"].append(f"Training completed. Checkpoint saved to {result.checkpoint_dir}")
+            save_training(state)
 
         threading.Thread(target=run_worker, daemon=True).start()
         return {"job_id": job_id, "status": "running"}
 
+    @app.get("/api/training")
+    async def list_training() -> list[dict[str, Any]]:
+        return [_summary(record) for record in store.list("training")]
+
     @app.get("/api/training/status/{job_id}")
     async def get_training_status(job_id: str) -> dict[str, Any]:
-        job_data = _JOBS.get(job_id)
-        if not job_data:
+        if job_id in jobs:
+            with state_lock:
+                return json.loads(json.dumps(_public(jobs[job_id])))
+        record = store.get("training", job_id)
+        if record is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        return {key: value for key, value in job_data.items() if key != "backend"}
+        return record
 
     @app.post("/api/training/cancel/{job_id}")
     async def cancel_training(job_id: str) -> dict[str, Any]:
-        job = _JOBS.get(job_id)
+        job = jobs.get(job_id)
         if job is None:
-            raise HTTPException(status_code=404, detail="Job not found")
+            record = store.get("training", job_id)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Job not found")
+            raise HTTPException(status_code=409, detail=f"Job {job_id} is {record['status']}, so it cannot be cancelled")
         job["backend"].cancel(job_id)
-        job["logs"].append("Cancel requested. The trainer stops at its next step.")
+        with state_lock:
+            job["logs"].append("Cancel requested. The trainer stops at its next step.")
+        save_training(job)
         return {"status": "cancelling"}
 
     @app.post("/api/benchmark", status_code=202)
@@ -377,13 +439,16 @@ def create_app() -> FastAPI:
         except _BENCHMARK_FAILURES as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         job_id = f"bench_{uuid.uuid4().hex[:12]}"
-        _BENCHMARKS[job_id] = {
-            "job_id": job_id, "status": "running", "mode": req.mode, "report": None, "error": None,
+        job: dict[str, Any] = {
+            "job_id": job_id, "status": "running", "created_at": _now(), "mode": req.mode, "k": req.k,
+            "path": req.path, "base_model": req.base.model, "trained_model": req.trained.model,
+            "report": None, "error": None,
             "logs": [f"Benchmarking {req.base.model} against {req.trained.model} ({req.mode}, k={req.k})"],
         }
+        benchmarks[job_id] = job
+        save_benchmark(job)
 
         def run_worker() -> None:
-            job = _BENCHMARKS[job_id]
             try:
                 report = run_comparison(req.mode, runner, req.k, req.base, req.trained)
                 path = write_report(report, Path(req.output_dir))
@@ -391,16 +456,21 @@ def create_app() -> FastAPI:
                 logger.warning("benchmark %s failed: %s", job_id, exc)
                 job.update(status="failed", error=str(exc))
                 job["logs"].append(f"Benchmark failed: {exc}")
-                return
-            job.update(status="completed", report=report.model_dump(mode="json"))
-            job["logs"].append(f"Report written to {path}")
+            else:
+                job.update(status="completed", report=report.model_dump(mode="json"))
+                job["logs"].append(f"Report written to {path}")
+            save_benchmark(job)
 
         threading.Thread(target=run_worker, daemon=True).start()
         return {"job_id": job_id, "status": "running"}
 
+    @app.get("/api/benchmark")
+    async def list_benchmarks() -> list[dict[str, Any]]:
+        return [_benchmark_summary(record) for record in store.list("benchmark")]
+
     @app.get("/api/benchmark/{job_id}")
     async def get_benchmark(job_id: str) -> dict[str, Any]:
-        job = _BENCHMARKS.get(job_id)
+        job = benchmarks.get(job_id) or store.get("benchmark", job_id)
         if job is None:
             raise HTTPException(status_code=404, detail="Benchmark job not found")
         return job
