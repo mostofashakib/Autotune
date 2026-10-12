@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Sequence
+from pathlib import Path
 from statistics import fmean
 
 from autotune.core.domain.models import (
@@ -13,7 +14,24 @@ from autotune.core.domain.models import (
     SampleResult,
     TaskComparison,
 )
+from autotune.core.ports.evaluator import BenchmarkRunner
 from autotune.infrastructure.evaluators.metrics import compute_pass_at_k
+
+REPORT_NAME = "benchmark_report.json"
+
+
+def run_comparison(
+    mode: BenchmarkMode, runner: BenchmarkRunner, k: int, base: ModelEndpoint, trained: ModelEndpoint,
+) -> ComparisonReport:
+    """Measure base, then trained, on the same runner and compare them."""
+    return compare(mode, k, base, trained, runner.run(base), runner.run(trained))
+
+
+def write_report(report: ComparisonReport, output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / REPORT_NAME
+    path.write_text(report.model_dump_json(indent=2))
+    return path
 
 
 def compare(

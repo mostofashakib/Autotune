@@ -1,19 +1,25 @@
 """Command-line interface for Autotune."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from autotune.core.domain.models import JobStatus, QuantizationMethod, RunPodConfig, TrainingJob, TrainingObjective
+from autotune.core.domain.models import (
+    ComparisonReport, JobStatus, ModelEndpoint, QuantizationMethod, RunPodConfig, TrainingJob, TrainingObjective,
+)
 from autotune.core.services.recipe_selector import AutoRecipeSelector
 from autotune.infrastructure.backends.mock_backend import MockTrainingBackend
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
-from autotune.infrastructure.evaluators.side_by_side import SideBySideEvaluator
+from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
+from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmark
+from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark, HarborError
+from autotune.infrastructure.evaluators.judge import JudgeError, LLMJudge
+from autotune.infrastructure.evaluators.openai_client import ModelCallError, OpenAIChatClient
+from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 
@@ -28,6 +34,12 @@ cloud_app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(cloud_app, name="cloud")
+benchmark_app = typer.Typer(
+    name="benchmark",
+    help="Measure a trained model against its base on held-out data or Harbor tasks.",
+    add_completion=False,
+)
+app.add_typer(benchmark_app, name="benchmark")
 console = Console()
 
 
@@ -155,55 +167,86 @@ def serve(
         raise typer.Exit(code=1)
 
 
-@app.command()
-def evaluate(
-    checkpoint_dir: Path = typer.Argument(..., help="Path to trained checkpoint directory"),
-    base_model: Optional[str] = typer.Option(None, "--base-model", "-m", help="Base model for comparison"),
-    eval_dataset: Optional[Path] = typer.Option(None, "--eval-dataset", "-d", help="Path to held-out eval dataset"),
+BENCHMARK_FAILURES = (ModelCallError, JudgeError, HarborError, MalformedExportError, ValueError)
+
+BaseUrl = typer.Option(..., "--base-url", help="OpenAI-compatible URL serving the base model")
+BaseModel = typer.Option(..., "--base-model", help="Base model name on that server")
+BaseKeyEnv = typer.Option(None, "--base-key-env", help="Env var holding the base server's API key")
+TrainedUrl = typer.Option(..., "--trained-url", help="OpenAI-compatible URL serving the trained model")
+TrainedModel = typer.Option(..., "--trained-model", help="Trained model name on that server")
+TrainedKeyEnv = typer.Option(None, "--trained-key-env", help="Env var holding the trained server's API key")
+Samples = typer.Option(3, "--k", "-k", min=1, help="Samples per task (pass@k)")
+Output = typer.Option(Path("benchmark_results"), "--output", "-o", help="Directory for benchmark_report.json")
+
+
+@benchmark_app.command("dataset")
+def benchmark_dataset(
+    data: Path = typer.Argument(..., help="Held-out export: sft_pairs.jsonl, messages JSONL, or a directory"),
+    base_url: str = BaseUrl, base_model: str = BaseModel, base_key_env: Optional[str] = BaseKeyEnv,
+    trained_url: str = TrainedUrl, trained_model: str = TrainedModel, trained_key_env: Optional[str] = TrainedKeyEnv,
+    k: int = Samples, output: Path = Output,
+    judge_url: Optional[str] = typer.Option(None, "--judge-url", help="OpenAI-compatible URL for an optional LLM judge"),
+    judge_model: Optional[str] = typer.Option(None, "--judge-model", help="Judge model name"),
+    judge_key_env: Optional[str] = typer.Option(None, "--judge-key-env", help="Env var holding the judge's API key"),
 ) -> None:
-    """Evaluate trained checkpoint side-by-side against base model."""
-    evaluator = SideBySideEvaluator()
-
-    # Read base model from metadata if not explicitly provided
-    resolved_base = base_model
-    if not resolved_base:
-        meta_path = checkpoint_dir / "autotune_meta.json"
-        if meta_path.exists():
-            try:
-                data = json.loads(meta_path.read_text())
-                resolved_base = data.get("base_model")
-            except Exception:
-                pass
-    if not resolved_base:
-        resolved_base = "meta-llama/Llama-3.1-8B-Instruct"
-
-    console.print(f"[bold cyan]Running benchmark comparison for {checkpoint_dir}...[/]")
-    try:
-        report = evaluator.evaluate(
-            base_model=resolved_base,
-            checkpoint_dir=checkpoint_dir,
-            eval_dataset_path=eval_dataset,
-        )
-    except Exception as exc:
-        console.print(f"[red]Evaluation error:[/] {exc}")
+    """Answer each held-out prompt k times and score it against the reference."""
+    if bool(judge_url) != bool(judge_model):
+        console.print("[red]--judge-url and --judge-model go together.[/]")
         raise typer.Exit(code=1)
+    client = OpenAIChatClient()
+    judge = LLMJudge(client, ModelEndpoint(base_url=judge_url, model=judge_model, api_key_env=judge_key_env)) if judge_url else None
+    _run_benchmark(
+        "dataset", lambda: DatasetBenchmark(load_sft(data), client, k, judge=judge), k, output,
+        ModelEndpoint(base_url=base_url, model=base_model, api_key_env=base_key_env),
+        ModelEndpoint(base_url=trained_url, model=trained_model, api_key_env=trained_key_env),
+    )
 
-    table = Table(title="Benchmark Evaluation Results", show_header=True, header_style="bold blue")
-    table.add_column("Task Probe")
-    table.add_column("Base Score")
-    table.add_column("Trained Score")
-    table.add_column("Improvement")
 
-    for m in report.metrics:
-        delta_color = "green" if m.delta > 0 else "red"
-        table.add_row(
-            m.task_name,
-            f"{m.base_score:.2f}",
-            f"{m.trained_score:.2f}",
-            f"[{delta_color}]{m.delta:+.2f}[/]",
-        )
+@benchmark_app.command("harbor")
+def benchmark_harbor(
+    tasks: Path = typer.Argument(..., help="A Harbor task directory, or a directory of tasks"),
+    base_url: str = BaseUrl, base_model: str = BaseModel, base_key_env: Optional[str] = BaseKeyEnv,
+    trained_url: str = TrainedUrl, trained_model: str = TrainedModel, trained_key_env: Optional[str] = TrainedKeyEnv,
+    k: int = Samples, output: Path = Output,
+    jobs_dir: Path = typer.Option(Path("benchmark_results/harbor_jobs"), "--jobs-dir", help="Where Harbor writes its trials"),
+    agent: str = typer.Option("terminus-2", "--agent", help="Harbor agent that drives the model"),
+) -> None:
+    """Run each model as an agent on Harbor tasks and grade it with each task's verifier."""
+    _run_benchmark(
+        "harbor", lambda: HarborBenchmark(tasks, k, jobs_dir, agent=agent), k, output,
+        ModelEndpoint(base_url=base_url, model=base_model, api_key_env=base_key_env),
+        ModelEndpoint(base_url=trained_url, model=trained_model, api_key_env=trained_key_env),
+    )
+
+
+def _run_benchmark(mode, make_runner, k: int, output: Path, base: ModelEndpoint, trained: ModelEndpoint) -> None:
+    console.print(f"[bold cyan]Benchmarking {base.model} against {trained.model} ({mode}, k={k})...[/]")
+    try:
+        report = run_comparison(mode, make_runner(), k, base, trained)
+    except BENCHMARK_FAILURES as exc:
+        console.print(f"[red]Benchmark failed:[/] {exc}")
+        raise typer.Exit(code=1)
+    path = write_report(report, output)
+    _print_report(report)
+    console.print(f"Report written to {path}")
+
+
+def _print_report(report: ComparisonReport) -> None:
+    table = Table(title=f"Benchmark ({report.mode}, k={report.k})", show_header=True, header_style="bold blue")
+    for column in ("Task", "Base pass@1", "Trained pass@1", "Change"):
+        table.add_column(column)
+    for task in report.tasks:
+        color = "green" if task.delta_pass_at_1 > 0 else "red" if task.delta_pass_at_1 < 0 else "white"
+        table.add_row(task.task_id, f"{task.base.pass_at_1:.2f}", f"{task.trained.pass_at_1:.2f}",
+                      f"[{color}]{task.delta_pass_at_1:+.2f}[/]")
     console.print(table)
-    console.print(f"[bold green]{report.summary}[/]")
+    for label, model in (("Base", report.base), ("Trained", report.trained)):
+        judge = f", judge {model.mean_judge_score:.2f}" if model.mean_judge_score is not None else ""
+        console.print(
+            f"{label}: pass@1 {model.pass_at_1:.2f}, pass@{report.k} {model.pass_at_k:.2f}, "
+            f"mean score {model.mean_score:.2f}{judge}, {model.errors} errored of {model.samples} samples"
+        )
+    console.print(f"[bold]Change: pass@1 {report.delta_pass_at_1:+.2f}, pass@{report.k} {report.delta_pass_at_k:+.2f}[/]")
 
 
 @cloud_app.command("list-gpus")

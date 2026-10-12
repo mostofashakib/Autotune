@@ -443,45 +443,82 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ── 5. Benchmark & Playground ───────────────────────────────────────────────
+  const benchStatus = document.getElementById("benchStatus");
+  const percent = (value) => `${(value * 100).toFixed(1)}%`;
+  const signed = (value) => `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)} pts vs base`;
+  const escapeHtml = (text) =>
+    String(text).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+  function renderBenchmark(report) {
+    document.getElementById("scorePass1").textContent = percent(report.trained.pass_at_1);
+    document.getElementById("scorePass1Delta").textContent = signed(report.delta_pass_at_1);
+    document.getElementById("scorePassKTitle").textContent = `Pass@${report.k} (trained)`;
+    document.getElementById("scorePassK").textContent = percent(report.trained.pass_at_k);
+    document.getElementById("scorePassKDelta").textContent = signed(report.delta_pass_at_k);
+    document.getElementById("scoreMean").textContent = report.trained.mean_score.toFixed(2);
+    document.getElementById("scoreMeanDelta").textContent = signed(report.delta_mean_score);
+    document.getElementById("scoreErrors").textContent =
+      `${report.base.errors + report.trained.errors} / ${report.base.samples + report.trained.samples}`;
+    document.getElementById("probeTableBody").innerHTML = report.tasks
+      .map(
+        (task) => `
+          <tr>
+            <td>${escapeHtml(task.task_id)}</td>
+            <td>${percent(task.base.pass_at_1)}</td>
+            <td>${percent(task.trained.pass_at_1)}</td>
+            <td class="${task.delta_pass_at_1 > 0 ? "text-emerald" : ""}">${signed(task.delta_pass_at_1)}</td>
+          </tr>`
+      )
+      .join("");
+  }
+
+  async function pollBenchmark(jobId) {
+    for (;;) {
+      const res = await fetch(`/api/benchmark/${jobId}`);
+      const job = await res.json();
+      if (job.status !== "running") return job;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  }
+
   btnRunEval.addEventListener("click", async () => {
     btnRunEval.disabled = true;
-    btnRunEval.textContent = "Evaluating...";
+    btnRunEval.textContent = "Benchmarking...";
+    benchStatus.textContent = "Running both models. This can take a while.";
     try {
-      const res = await fetch("/api/evaluate", {
+      const res = await fetch("/api/benchmark", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          base_model: recipeBaseModel.value,
-          checkpoint_dir: "./checkpoints/ui-model",
+          mode: document.getElementById("benchMode").value,
+          path: document.getElementById("benchPath").value.trim(),
+          k: Number(document.getElementById("benchK").value),
+          base: {
+            base_url: document.getElementById("benchBaseUrl").value.trim(),
+            model: document.getElementById("benchBaseModel").value.trim(),
+          },
+          trained: {
+            base_url: document.getElementById("benchTrainedUrl").value.trim(),
+            model: document.getElementById("benchTrainedModel").value.trim(),
+          },
         }),
       });
-      const report = await res.json();
-
-      document.getElementById("scorePass1").textContent = `${report.pass_at_1.toFixed(1)}%`;
-      document.getElementById("scorePass3").textContent = `${report.pass_at_3.toFixed(1)}%`;
-      document.getElementById("scoreNetImp").textContent = `+${report.improvement_percentage.toFixed(1)}%`;
-
-      if (report.metrics && report.metrics.length > 0) {
-        const tbody = document.getElementById("probeTableBody");
-        tbody.innerHTML = report.metrics
-          .map(
-            (m) => `
-          <tr>
-            <td>${m.task_name}</td>
-            <td>${m.base_score.toFixed(1)}%</td>
-            <td>${m.trained_score.toFixed(1)}%</td>
-            <td class="${m.delta > 0 ? "text-emerald" : "text-danger"}">${m.delta > 0 ? "+" : ""}${m.delta.toFixed(1)}%</td>
-            <td><span class="badge ${m.passed ? "badge-emerald" : "badge-gray"}">${m.passed ? "PASSED" : "FAILED"}</span></td>
-          </tr>
-        `
-          )
-          .join("");
+      const started = await res.json();
+      if (!res.ok) {
+        const detail = typeof started.detail === "string" ? started.detail : JSON.stringify(started.detail);
+        throw new Error(detail);
       }
+      const job = await pollBenchmark(started.job_id);
+      if (job.status !== "completed") throw new Error(job.error || "benchmark failed");
+      renderBenchmark(job.report);
+      benchStatus.textContent = `Measured ${job.report.trained.samples} samples per model.`;
+      logMessage(`✓ Benchmark ${job.job_id} finished.`);
     } catch (err) {
-      console.error("Evaluation error:", err);
+      benchStatus.textContent = `Benchmark failed: ${err.message}`;
+      logMessage(`Benchmark failed: ${err.message}`);
     } finally {
       btnRunEval.disabled = false;
-      btnRunEval.textContent = "▶ Run Benchmark Evaluation";
+      btnRunEval.textContent = "▶ Run Benchmark";
     }
   });
 

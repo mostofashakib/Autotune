@@ -10,7 +10,6 @@ from autotune.infrastructure.evaluators.metrics import (
     generate_benchmark_graphs,
 )
 from autotune.infrastructure.evaluators.report import BenchmarkReport, ReportConfig
-from autotune.infrastructure.evaluators.side_by_side import SideBySideEvaluator
 from autotune.infrastructure.evaluators.task_suite import Task
 
 __all__ = [
@@ -19,7 +18,6 @@ __all__ = [
     "EnvQualityMetrics",
     "GraphSeries",
     "ReportConfig",
-    "SideBySideEvaluator",
     "Task",
     "TaskTrial",
     "compute_cohens_kappa",

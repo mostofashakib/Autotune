@@ -263,70 +263,78 @@
       <div class="card benchmark-card">
         <div class="card-header">
           <div>
-            <h2>Side-by-Side Model Evaluation & Proof of Improvement</h2>
-            <div class="card-desc">Verify real skill gains by pitting your fine-tuned checkpoint against the base model on held-out tasks.</div>
+            <h2>Side-by-Side Benchmark</h2>
+            <div class="card-desc">Measure the trained model against its base on held-out data or Harbor tasks. Both models are served from OpenAI-compatible endpoints.</div>
           </div>
-          <button class="btn btn-primary" id="btnRunEval">▶ Run Benchmark Evaluation</button>
+          <button class="btn btn-primary" id="btnRunEval">▶ Run Benchmark</button>
         </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Mode</label>
+            <select id="benchMode" class="form-select">
+              <option value="dataset">Held-out dataset (exact match + token F1)</option>
+              <option value="harbor">Harbor tasks (agent in Docker, verifier-graded)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Dataset file or Harbor task directory</label>
+            <input type="text" id="benchPath" class="form-input" placeholder="exports/sft_pairs.jsonl">
+          </div>
+          <div class="form-group">
+            <label>Samples per task (k)</label>
+            <input type="number" id="benchK" class="form-input" value="3" min="1" max="50">
+          </div>
+          <div class="form-group">
+            <label>Base model endpoint</label>
+            <input type="text" id="benchBaseUrl" class="form-input" placeholder="http://localhost:8000/v1">
+            <input type="text" id="benchBaseModel" class="form-input" placeholder="base model name">
+          </div>
+          <div class="form-group">
+            <label>Trained model endpoint</label>
+            <input type="text" id="benchTrainedUrl" class="form-input" placeholder="http://localhost:8001/v1">
+            <input type="text" id="benchTrainedModel" class="form-input" placeholder="trained model name">
+          </div>
+        </div>
+        <div class="card-desc" id="benchStatus">No benchmark has run yet.</div>
 
         <!-- Scorecard summary -->
         <div class="scorecard-grid">
           <div class="score-card">
-            <div class="score-title">Pass@1 Accuracy</div>
-            <div class="score-val text-emerald" id="scorePass1">68.5%</div>
-            <div class="score-delta">+14.2% over base model</div>
+            <div class="score-title">Pass@1 (trained)</div>
+            <div class="score-val text-emerald" id="scorePass1">—</div>
+            <div class="score-delta" id="scorePass1Delta">Run a benchmark to measure</div>
           </div>
           <div class="score-card">
-            <div class="score-title">Pass@3 Consistency</div>
-            <div class="score-val text-cyan" id="scorePass3">84.2%</div>
-            <div class="score-delta">+18.9% over base model</div>
+            <div class="score-title" id="scorePassKTitle">Pass@k (trained)</div>
+            <div class="score-val text-cyan" id="scorePassK">—</div>
+            <div class="score-delta" id="scorePassKDelta">Run a benchmark to measure</div>
           </div>
           <div class="score-card">
-            <div class="score-title">Net Improvement</div>
-            <div class="score-val text-emerald" id="scoreNetImp">+14.8%</div>
-            <div class="score-delta">Statistically significant</div>
+            <div class="score-title">Mean score (trained)</div>
+            <div class="score-val text-emerald" id="scoreMean">—</div>
+            <div class="score-delta" id="scoreMeanDelta">Run a benchmark to measure</div>
           </div>
           <div class="score-card">
-            <div class="score-title">Reward Hacking Risk</div>
-            <div class="score-val text-emerald" id="scoreHacking">LOW</div>
-            <div class="score-delta">High policy robustness</div>
+            <div class="score-title">Errored samples</div>
+            <div class="score-val" id="scoreErrors">—</div>
+            <div class="score-delta">Crashed trials or failed calls, counted as failures</div>
           </div>
         </div>
 
-        <!-- Probe breakdown table -->
+        <!-- Per-task breakdown table -->
         <div class="table-container">
           <table class="probe-table">
             <thead>
               <tr>
-                <th>Benchmark Task Probe</th>
-                <th>Base Model Score</th>
-                <th>Trained Checkpoint Score</th>
-                <th>Improvement</th>
-                <th>Verdict</th>
+                <th>Task</th>
+                <th>Base pass@1</th>
+                <th>Trained pass@1</th>
+                <th>Change</th>
               </tr>
             </thead>
             <tbody id="probeTableBody">
-              <tr>
-                <td>Multi-Step Complex Reasoning</td>
-                <td>52.0%</td>
-                <td>71.0%</td>
-                <td class="text-emerald">+19.0%</td>
-                <td><span class="badge badge-emerald">PASSED</span></td>
-              </tr>
-              <tr>
-                <td>API Tool Call Formatting</td>
-                <td>64.0%</td>
-                <td>86.0%</td>
-                <td class="text-emerald">+22.0%</td>
-                <td><span class="badge badge-emerald">PASSED</span></td>
-              </tr>
-              <tr>
-                <td>Policy & Constraint Adherence</td>
-                <td>59.0%</td>
-                <td>74.0%</td>
-                <td class="text-emerald">+15.0%</td>
-                <td><span class="badge badge-emerald">PASSED</span></td>
-              </tr>
+              <tr><td colspan="4">No benchmark has run yet.</td></tr>
             </tbody>
           </table>
         </div>

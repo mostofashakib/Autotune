@@ -8,18 +8,20 @@ import os
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from autotune.core.domain.models import (
     CleanedDataset,
     JobStatus,
+    ModelEndpoint,
     QuantizationMethod,
     Recipe,
     RunPodConfig,
@@ -31,7 +33,13 @@ from autotune.core.services.recipe_selector import AutoRecipeSelector
 from autotune.infrastructure.backends.mock_backend import MockTrainingBackend
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
-from autotune.infrastructure.evaluators.side_by_side import SideBySideEvaluator
+from autotune.core.ports.evaluator import BenchmarkRunner
+from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
+from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmark
+from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark, HarborError
+from autotune.infrastructure.evaluators.judge import JudgeError, LLMJudge
+from autotune.infrastructure.evaluators.openai_client import ModelCallError, OpenAIChatClient
+from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 
@@ -42,6 +50,9 @@ STATIC_DIR = Path(__file__).parent / "static"
 # In-memory training job tracker
 _JOBS: dict[str, dict[str, Any]] = {}
 _ACTIVE_SERVING: Optional[VLLMServingProvider] = None
+# In-memory benchmark job tracker
+_BENCHMARKS: dict[str, dict[str, Any]] = {}
+_BENCHMARK_FAILURES = (ModelCallError, JudgeError, HarborError, MalformedExportError, ValueError, OSError)
 
 
 class TrainingStartRequest(BaseModel):
@@ -58,9 +69,31 @@ class TrainingStartRequest(BaseModel):
     output_dir: str = "./checkpoints/ui-model"
 
 
-class EvaluationRequest(BaseModel):
-    checkpoint_dir: str = "./checkpoints/ui-model"
-    base_model: str = "meta-llama/Llama-3.1-8B-Instruct"
+class BenchmarkRequest(BaseModel):
+    mode: Literal["dataset", "harbor"]
+    # A held-out export for dataset mode, or a Harbor task directory for harbor mode.
+    path: str = Field(min_length=1)
+    base: ModelEndpoint
+    trained: ModelEndpoint
+    k: int = Field(default=3, ge=1, le=50)
+    judge: Optional[ModelEndpoint] = None
+    output_dir: str = "benchmark_results"
+    jobs_dir: str = "benchmark_results/harbor_jobs"
+
+    @model_validator(mode="after")
+    def _judge_needs_dataset_mode(self) -> "BenchmarkRequest":
+        if self.judge is not None and self.mode != "dataset":
+            raise ValueError("an LLM judge only applies to dataset mode")
+        return self
+
+
+def build_benchmark_runner(req: BenchmarkRequest) -> BenchmarkRunner:
+    """The runner for `req`. Raises when its data or tasks cannot be used."""
+    if req.mode == "harbor":
+        return HarborBenchmark(Path(req.path), req.k, Path(req.jobs_dir))
+    client = OpenAIChatClient()
+    judge = LLMJudge(client, req.judge) if req.judge else None
+    return DatasetBenchmark(load_sft(Path(req.path)), client, req.k, judge=judge)
 
 
 class ServingRequest(BaseModel):
@@ -330,31 +363,40 @@ def create_app() -> FastAPI:
             return {"status": "cancelled"}
         raise HTTPException(status_code=404, detail="Job not found")
 
-    @app.post("/api/evaluate")
-    async def evaluate_checkpoint(req: EvaluationRequest) -> dict[str, Any]:
-        evaluator = SideBySideEvaluator()
+    @app.post("/api/benchmark", status_code=202)
+    async def start_benchmark(req: BenchmarkRequest) -> dict[str, Any]:
         try:
-            report = evaluator.evaluate(
-                base_model=req.base_model,
-                checkpoint_dir=Path(req.checkpoint_dir),
-            )
-            return report.model_dump()
-        except Exception as exc:
-            logger.error("Evaluation failed: %s", exc)
-            return {
-                "job_id": "eval_mock",
-                "base_model": req.base_model,
-                "checkpoint_dir": req.checkpoint_dir,
-                "pass_at_1": 68.5,
-                "pass_at_3": 84.2,
-                "improvement_percentage": 14.8,
-                "metrics": [
-                    {"task_name": "Multi-Step Complex Reasoning", "base_score": 52.0, "trained_score": 71.0, "delta": 19.0, "passed": True},
-                    {"task_name": "API Tool Call Formatting", "base_score": 64.0, "trained_score": 86.0, "delta": 22.0, "passed": True},
-                    {"task_name": "Policy & Constraint Adherence", "base_score": 59.0, "trained_score": 74.0, "delta": 15.0, "passed": True},
-                ],
-                "summary": "Trained checkpoint scored +14.8% average improvement across benchmark probes.",
-            }
+            runner = build_benchmark_runner(req)
+        except _BENCHMARK_FAILURES as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        job_id = f"bench_{uuid.uuid4().hex[:12]}"
+        _BENCHMARKS[job_id] = {
+            "job_id": job_id, "status": "running", "mode": req.mode, "report": None, "error": None,
+            "logs": [f"Benchmarking {req.base.model} against {req.trained.model} ({req.mode}, k={req.k})"],
+        }
+
+        def run_worker() -> None:
+            job = _BENCHMARKS[job_id]
+            try:
+                report = run_comparison(req.mode, runner, req.k, req.base, req.trained)
+                path = write_report(report, Path(req.output_dir))
+            except _BENCHMARK_FAILURES as exc:
+                logger.warning("benchmark %s failed: %s", job_id, exc)
+                job.update(status="failed", error=str(exc))
+                job["logs"].append(f"Benchmark failed: {exc}")
+                return
+            job.update(status="completed", report=report.model_dump(mode="json"))
+            job["logs"].append(f"Report written to {path}")
+
+        threading.Thread(target=run_worker, daemon=True).start()
+        return {"job_id": job_id, "status": "running"}
+
+    @app.get("/api/benchmark/{job_id}")
+    async def get_benchmark(job_id: str) -> dict[str, Any]:
+        job = _BENCHMARKS.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Benchmark job not found")
+        return job
 
     @app.get("/api/cloud/gpus")
     async def get_cloud_gpus(api_key: Optional[str] = None) -> list[dict[str, Any]]:

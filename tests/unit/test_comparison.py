@@ -85,3 +85,35 @@ def test_the_report_never_carries_an_api_key(monkeypatch):
 
     assert "sk-secret-value" not in dumped
     assert "TRAINED_KEY" in dumped
+
+
+class RecordingRunner:
+    def __init__(self, by_model):
+        self.by_model = by_model
+        self.models = []
+
+    def run(self, model):
+        self.models.append(model.model)
+        return self.by_model[model.model]
+
+
+def test_run_comparison_measures_base_then_trained_on_the_same_runner():
+    from autotune.infrastructure.evaluators.comparison import run_comparison
+
+    runner = RecordingRunner({"base": _samples("a", [False]), "trained": _samples("a", [True])})
+
+    report = run_comparison("dataset", runner, 1, BASE, TRAINED)
+
+    assert runner.models == ["base", "trained"]
+    assert report.delta_pass_at_1 == pytest.approx(1.0)
+
+
+def test_write_report_saves_the_measured_report_as_json(tmp_path):
+    from autotune.infrastructure.evaluators.comparison import write_report
+
+    report = compare("dataset", 1, BASE, TRAINED, _samples("a", [False]), _samples("a", [True]))
+
+    path = write_report(report, tmp_path / "out")
+
+    assert path == tmp_path / "out" / "benchmark_report.json"
+    assert path.read_text() == report.model_dump_json(indent=2)

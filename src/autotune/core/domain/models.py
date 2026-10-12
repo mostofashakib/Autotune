@@ -129,25 +129,6 @@ class CheckpointResult(BaseModel):
     status: JobStatus = JobStatus.COMPLETED
 
 
-class EvalMetric(BaseModel):
-    task_name: str
-    base_score: float
-    trained_score: float
-    delta: float
-    passed: bool
-
-
-class EvaluationReport(BaseModel):
-    job_id: str
-    base_model: str
-    checkpoint_dir: str
-    pass_at_1: float
-    pass_at_3: float
-    improvement_percentage: float
-    metrics: list[EvalMetric] = Field(default_factory=list)
-    summary: str = ""
-
-
 BenchmarkMode = Literal["dataset", "harbor"]
 
 
