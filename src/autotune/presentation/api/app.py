@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import tempfile
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -110,13 +109,21 @@ def build_training_backend() -> TrainingBackend:
     return TrlPeftBackend()
 
 
+def _uploads_dir() -> Path:
+    return data_dir() / "uploads"
+
+
+def _upload_name(filename: str | None) -> str:
+    """The upload's file name, refusing anything that is a path rather than a bare name."""
+    name = (filename or "").strip()
+    if not name or name in (".", "..") or Path(name).name != name or "\\" in name:
+        raise HTTPException(status_code=400, detail=f"Upload name {filename!r} must be a plain file name")
+    return name
+
+
 def _resolve_dataset(name: str) -> Path:
-    """The dataset path, also looking where samples and uploads are written."""
-    for candidate in (
-        Path(name),
-        Path(tempfile.gettempdir()) / "autotune_samples" / name,
-        Path(tempfile.gettempdir()) / "autotune_uploads" / name,
-    ):
+    """The dataset path, also looking in the uploads directory."""
+    for candidate in (Path(name), _uploads_dir() / name):
         if candidate.is_file():
             return candidate
     raise HTTPException(status_code=422, detail=f"dataset {name!r} was not found")
@@ -233,87 +240,19 @@ def create_app() -> FastAPI:
             "recommended_quantization": "qlora_4bit_nf4" if vram <= 32 else "lora_16bit",
         }
 
-    @app.post("/api/dataset/sample")
-    async def load_sample_dataset(task: str = "rl_grpo") -> dict[str, Any]:
-        """Generate an in-memory sample dataset for instant zero-click testing."""
-        temp_dir = Path(tempfile.gettempdir()) / "autotune_samples"
-        temp_dir.mkdir(exist_ok=True)
-        file_path = temp_dir / f"sample_{task}.jsonl"
-
-        if task == "rl_grpo":
-            data = [
-                {
-                    "prompt": f"Write an efficient algorithm for inventory optimization item #{i}",
-                    "messages": [
-                        {"role": "user", "content": f"Write an efficient algorithm for inventory optimization item #{i}"},
-                        {"role": "assistant", "content": f"```python\ndef optimize_{i}():\n    return 'optimal'\n```"},
-                    ],
-                    "reward": 0.85 + (i % 3) * 0.05,
-                }
-                for i in range(25)
-            ]
-        elif task == "preference":
-            data = [
-                {
-                    "prompt": f"Customer requests refund for damaged order #{100+i}",
-                    "chosen": [{"role": "assistant", "content": f"I have verified the return and processed full refund of $49 for #{100+i}."}],
-                    "rejected": [{"role": "assistant", "content": f"Sorry we cannot help you with order #{100+i}."}],
-                    "chosen_reward": 1.0,
-                    "rejected_reward": 0.0,
-                }
-                for i in range(20)
-            ]
-        else:
-            data = [
-                {
-                    "messages": [
-                        {"role": "user", "content": f"Extract JSON attributes from invoice #{200+i}"},
-                        {"role": "assistant", "content": json.dumps({"invoice_id": 200 + i, "status": "approved"})},
-                    ]
-                }
-                for i in range(30)
-            ]
-
-        with file_path.open("w", encoding="utf-8") as f:
-            for item in data:
-                f.write(json.dumps(item) + "\n")
-
-        sanitizer = AutoFormatSanitizer()
-        cleaned = sanitizer.sanitize(file_path)
-        selector = AutoRecipeSelector()
-        recipe = selector.select_recipe(cleaned)
-
-        return {
-            "file_name": file_path.name,
-            "file_path": str(file_path),
-            "task_type": cleaned.task_type.value,
-            "total_records": cleaned.total_records,
-            "train_records": len(cleaned.train_records),
-            "val_records": len(cleaned.val_records),
-            "dropped_count": cleaned.dropped_count,
-            "recipe": recipe.model_dump(),
-            "preview": [
-                {
-                    "prompt": r.prompt or (r.messages[0].content if r.messages else ""),
-                    "completion": r.completions[0] if r.completions else (r.messages[-1].content if len(r.messages) > 1 else ""),
-                }
-                for r in cleaned.train_records[:3]
-            ],
-        }
-
     @app.post("/api/dataset/upload")
     async def upload_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
-        temp_dir = Path(tempfile.gettempdir()) / "autotune_uploads"
-        temp_dir.mkdir(exist_ok=True)
-        dest_path = temp_dir / file.filename
-
-        content = await file.read()
-        dest_path.write_bytes(content)
+        name = _upload_name(file.filename)
+        uploads = _uploads_dir()
+        uploads.mkdir(parents=True, exist_ok=True)
+        dest_path = uploads / name
+        dest_path.write_bytes(await file.read())
 
         sanitizer = AutoFormatSanitizer()
         try:
             cleaned = sanitizer.sanitize(dest_path)
         except Exception as exc:
+            dest_path.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=f"Failed to parse dataset: {exc}")
 
         selector = AutoRecipeSelector()
