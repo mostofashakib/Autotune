@@ -378,11 +378,12 @@ document.addEventListener("DOMContentLoaded", () => {
   async function fetchCloudGpus() {
     try {
       const res = await fetch("/api/cloud/gpus");
-      const list = await res.json();
-      state.cloudGpus = list;
-      renderCloudGpus(list);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail);
+      state.cloudGpus = body;
+      renderCloudGpus(body);
     } catch (err) {
-      console.error("Error fetching GPUs:", err);
+      gpuCatalogGrid.innerHTML = `<div class="gpu-card"><div>${escapeHtml(err.message)}</div></div>`;
     }
   }
 
@@ -394,11 +395,11 @@ document.addEventListener("DOMContentLoaded", () => {
         (g) => `
       <div class="gpu-card">
         <div>
-          <div class="gpu-name">${g.name}</div>
+          <div class="gpu-name">${escapeHtml(g.name)}</div>
           <div class="gpu-vram">${g.memory_gb} GB VRAM</div>
           <div class="gpu-price">$${g.community_price.toFixed(2)}/hr</div>
         </div>
-        <button class="btn btn-secondary btn-launch" data-gpu="${g.id}">Deploy Instance</button>
+        <button class="btn btn-secondary btn-launch" data-gpu="${escapeHtml(g.id)}">Deploy Instance</button>
       </div>
     `
       )
@@ -420,6 +421,7 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({ gpu_type: gpuId, pod_name: "autotune-trainer" }),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.detail);
       state.activePod = data;
 
       instId.textContent = `Pod ID: ${data.pod_id} (${data.gpu_name})`;
@@ -433,14 +435,20 @@ document.addEventListener("DOMContentLoaded", () => {
         setTimeout(() => (btnCopySsh.textContent = "Copy SSH Command"), 1800);
       };
 
-      btnStopInstance.onclick = () => {
+      btnStopInstance.onclick = async () => {
+        const stop = await fetch(`/api/cloud/stop/${encodeURIComponent(data.pod_id)}`, { method: "POST" });
+        const result = await stop.json();
+        if (!stop.ok) {
+          logMessage(`Failed to stop pod ${data.pod_id}: ${result.detail}`);
+          return;
+        }
         instId.textContent = "Pod deallocated";
-        instDetails.textContent = "Instance terminated.";
+        instDetails.textContent = `Pod ${data.pod_id} terminated on RunPod.`;
         btnCopySsh.style.display = "none";
         btnStopInstance.style.display = "none";
       };
 
-      logMessage(`✓ RunPod instance ${data.pod_id} is online and ready for distributed training.`);
+      logMessage(`✓ RunPod created pod ${data.pod_id} (status ${data.status}).`);
     } catch (err) {
       logMessage(`Failed to provision RunPod instance: ${err.message}`, "text-danger");
     }

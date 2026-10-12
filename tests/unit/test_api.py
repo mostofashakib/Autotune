@@ -45,12 +45,3 @@ def test_playground_generate(client):
     data = response.json()
     assert "response" in data
     assert len(data["response"]) > 0
-
-
-def test_cloud_gpus_catalog(client):
-    response = client.get("/api/cloud/gpus")
-    assert response.status_code == 200
-    data = response.json()
-    assert isinstance(data, list)
-    assert len(data) >= 1
-    assert "NVIDIA" in data[0]["id"]

@@ -132,3 +132,11 @@ def test_list_available_gpus():
     assert len(gpus) == 2
     assert gpus[0]["id"] == "RTX 4090"
     assert gpus[1]["community_price"] == 1.89
+
+
+def test_a_graphql_error_reply_raises_instead_of_reading_as_an_empty_catalog():
+    def graphql(method, url, headers, body):
+        return 200, json.dumps({"data": None, "errors": [{"message": "Unauthorized"}]}).encode()
+
+    with pytest.raises(RuntimeError, match="Unauthorized"):
+        RunPodCloudProvider(api_key="rp-live-123", request_fn=graphql).list_available_gpus()

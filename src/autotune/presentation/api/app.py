@@ -6,9 +6,9 @@ import json
 import logging
 import tempfile
 import threading
-import time
 import uuid
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Literal, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -41,7 +41,7 @@ from autotune.infrastructure.evaluators.openai_client import ModelCallError, Ope
 from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
-from autotune.settings import RUNPOD_API_KEY, credential_value, export_configured_credentials, is_configured
+from autotune.settings import CredentialNotConfigured, export_configured_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +66,17 @@ class TrainingStartRequest(BaseModel):
     epochs: Optional[int] = 3
     batch_size: Optional[int] = 2
     output_dir: str = "./checkpoints/ui-model"
+
+
+def _runpod_call(call: Callable[[], Any]) -> Any:
+    """RunPod's answer, or an HTTP error: 503 without a configured key, 502 when RunPod fails."""
+    try:
+        return call()
+    except CredentialNotConfigured as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except (RuntimeError, ConnectionError, ValueError) as exc:
+        logger.warning("RunPod request failed: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 def build_training_backend() -> TrainingBackend:
@@ -388,47 +399,23 @@ def create_app() -> FastAPI:
 
     @app.get("/api/cloud/gpus")
     async def get_cloud_gpus(api_key: Optional[str] = None) -> list[dict[str, Any]]:
-        provider = RunPodCloudProvider(api_key=api_key)
-        try:
-            if is_configured(credential_value(RUNPOD_API_KEY, api_key)):
-                return provider.list_available_gpus()
-        except Exception:
-            pass
-
-        # Return realistic real-time catalog if offline
-        return [
-            {"id": "NVIDIA GeForce RTX 4090", "name": "GeForce RTX 4090", "memory_gb": 24, "community_price": 0.44},
-            {"id": "NVIDIA RTX A6000", "name": "RTX A6000", "memory_gb": 48, "community_price": 0.79},
-            {"id": "NVIDIA A100-SXM4-80GB", "name": "A100 SXM4 80GB", "memory_gb": 80, "community_price": 1.89},
-            {"id": "NVIDIA H100-80GB-HBM3", "name": "H100 SXM 80GB", "memory_gb": 80, "community_price": 3.29},
-        ]
+        return _runpod_call(lambda: RunPodCloudProvider(api_key=api_key).list_available_gpus())
 
     @app.post("/api/cloud/launch")
     async def launch_cloud_pod(req: RunPodLaunchRequest) -> dict[str, Any]:
-        provider = RunPodCloudProvider(api_key=req.api_key)
         config = RunPodConfig(
             gpu_type_id=req.gpu_type,
             pod_name=req.pod_name,
             container_disk_in_gb=req.disk_gb,
             volume_in_gb=req.disk_gb,
         )
-        try:
-            if is_configured(credential_value(RUNPOD_API_KEY, req.api_key)):
-                inst = provider.create_instance(config)
-                return inst.model_dump()
-        except Exception as exc:
-            logger.warning("Live RunPod launch failed: %s, falling back to simulated instance", exc)
+        return _runpod_call(lambda: RunPodCloudProvider(api_key=req.api_key).create_instance(config).model_dump())
 
-        # Simulated instance
-        return {
-            "pod_id": f"pod_{int(time.time())}",
-            "name": req.pod_name,
-            "status": "RUNNING",
-            "gpu_name": req.gpu_type,
-            "cost_per_hr": 0.44 if "4090" in req.gpu_type else 1.89,
-            "ssh_ip": "194.26.198.42",
-            "ssh_port": 22045,
-        }
+    @app.post("/api/cloud/stop/{pod_id}")
+    async def stop_cloud_pod(pod_id: str, api_key: Optional[str] = None) -> dict[str, Any]:
+        if not _runpod_call(lambda: RunPodCloudProvider(api_key=api_key).stop_instance(pod_id)):
+            raise HTTPException(status_code=502, detail=f"RunPod did not terminate pod {pod_id}")
+        return {"pod_id": pod_id, "status": "TERMINATED"}
 
     @app.post("/api/serve/start")
     async def start_vllm_server(req: ServingRequest) -> dict[str, Any]:

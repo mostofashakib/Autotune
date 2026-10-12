@@ -226,7 +226,10 @@ class RunPodCloudProvider(CloudComputeProvider):
         )
         if status_code != 200:
             raise RuntimeError(f"RunPod API returned status {status_code}: {resp_bytes.decode('utf-8', errors='ignore')}")
-        return json.loads(resp_bytes.decode("utf-8"))
+        payload = json.loads(resp_bytes.decode("utf-8"))
+        if payload.get("errors"):
+            raise RuntimeError(f"RunPod GraphQL error: {payload['errors']}")
+        return payload
 
     @staticmethod
     def _default_graphql_request(
