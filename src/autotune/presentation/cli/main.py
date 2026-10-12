@@ -350,15 +350,15 @@ def cloud_stop(
 
 
 @app.command()
-def ui(
+def api(
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host interface to bind"),
-    port: int = typer.Option(7860, "--port", "-p", help="Port to bind dashboard server"),
+    port: int = typer.Option(7860, "--port", "-p", help="Port to bind the API server"),
 ) -> None:
-    """Launch the Autotune interactive Web Cockpit UI."""
+    """Run the API that the Autotune web UI (frontend/) talks to."""
     import uvicorn
     from autotune.presentation.api.app import create_app
 
-    console.print(f"[bold cyan]Launching Autotune Web Cockpit on http://{host}:{port}...[/]")
+    console.print(f"[bold cyan]Autotune API on http://{host}:{port}[/]")
     app_instance = create_app()
     uvicorn.run(app_instance, host=host, port=port, log_level="info")
 

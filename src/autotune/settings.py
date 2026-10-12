@@ -16,6 +16,14 @@ ENV_FILE = ROOT / ".env"
 PLACEHOLDER = "mock_key"
 
 
+DEFAULT_UI_ORIGIN = "http://localhost:3001"
+
+
+def ui_origin() -> str:
+    """The web UI's origin, the only one the API accepts cross-origin requests from."""
+    return os.environ.get("AUTOTUNE_UI_ORIGIN", "").strip() or DEFAULT_UI_ORIGIN
+
+
 def data_dir() -> Path:
     """Where uploads and the job database live: AUTOTUNE_DATA_DIR, else <repo>/data."""
     configured = os.environ.get("AUTOTUNE_DATA_DIR", "").strip()

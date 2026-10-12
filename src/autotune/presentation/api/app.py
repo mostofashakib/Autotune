@@ -13,8 +13,7 @@ from typing import Any, Literal, Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from autotune.core.domain.models import (
@@ -42,11 +41,18 @@ from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportErr
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 from autotune.infrastructure.storage.job_store import JobStore
-from autotune.settings import CredentialNotConfigured, data_dir, export_configured_credentials
+from autotune.settings import (
+    CREDENTIALS,
+    ENV_FILE,
+    CredentialNotConfigured,
+    credential_value,
+    data_dir,
+    export_configured_credentials,
+    is_configured,
+    ui_origin,
+)
 
 logger = logging.getLogger(__name__)
-
-STATIC_DIR = Path(__file__).parent / "static"
 
 _ACTIVE_SERVING: Optional[VLLMServingProvider] = None
 _BENCHMARK_FAILURES = (ModelCallError, JudgeError, HarborError, MalformedExportError, ValueError, OSError)
@@ -212,21 +218,26 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=[ui_origin()],
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    if STATIC_DIR.exists():
-        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
     @app.get("/")
-    async def index() -> FileResponse:
-        index_file = STATIC_DIR / "index.html"
-        if not index_file.exists():
-            raise HTTPException(status_code=404, detail="Frontend index.html not found.")
-        return FileResponse(index_file)
+    async def index() -> dict[str, str]:
+        return {"name": "Autotune API", "ui": ui_origin(), "docs": "/docs"}
+
+    @app.get("/api/settings/credentials")
+    async def credentials() -> list[dict[str, Any]]:
+        return [
+            {
+                "name": credential.env_var,
+                "purpose": credential.purpose,
+                "configured": is_configured(credential_value(credential)),
+                "env_file": ENV_FILE.name,
+            }
+            for credential in CREDENTIALS
+        ]
 
     @app.get("/api/system/status")
     async def get_system_status() -> dict[str, Any]:
@@ -426,12 +437,33 @@ def create_app() -> FastAPI:
             container_disk_in_gb=req.disk_gb,
             volume_in_gb=req.disk_gb,
         )
-        return _runpod_call(lambda: RunPodCloudProvider(api_key=req.api_key).create_instance(config).model_dump())
+        pod = _runpod_call(lambda: RunPodCloudProvider(api_key=req.api_key).create_instance(config).model_dump())
+        store.save("pod", pod["pod_id"], {**pod, "launched_at": _now()})
+        return pod
+
+    @app.get("/api/cloud/pods")
+    def list_cloud_pods(api_key: Optional[str] = None) -> list[dict[str, Any]]:
+        """Pods launched from Autotune, with RunPod's live status, or the stored record and why it is stale."""
+        pods = []
+        for record in store.list("pod"):
+            if record["status"] == "TERMINATED":
+                pods.append({**record, "live_error": None})
+                continue
+            try:
+                live = RunPodCloudProvider(api_key=api_key).get_instance_status(record["pod_id"]).model_dump()
+            except (CredentialNotConfigured, RuntimeError, ConnectionError, ValueError) as exc:
+                pods.append({**record, "live_error": str(exc)})
+            else:
+                pods.append({**record, **live, "live_error": None})
+        return pods
 
     @app.post("/api/cloud/stop/{pod_id}")
     async def stop_cloud_pod(pod_id: str, api_key: Optional[str] = None) -> dict[str, Any]:
         if not _runpod_call(lambda: RunPodCloudProvider(api_key=api_key).stop_instance(pod_id)):
             raise HTTPException(status_code=502, detail=f"RunPod did not terminate pod {pod_id}")
+        record = store.get("pod", pod_id)
+        if record is not None:
+            store.save("pod", pod_id, {**record, "status": "TERMINATED"})
         return {"pod_id": pod_id, "status": "TERMINATED"}
 
     @app.post("/api/serve/start", status_code=202)

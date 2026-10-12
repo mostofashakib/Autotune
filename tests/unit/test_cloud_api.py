@@ -107,3 +107,68 @@ def test_a_pod_runpod_would_not_terminate_is_reported(client, runpod):
     runpod.stopped = False
 
     assert client.post("/api/cloud/stop/pod_real").status_code == 502
+
+
+class StatusRunPod(FakeRunPod):
+    def __init__(self, status_error: Exception | None = None):
+        super().__init__()
+        self.status_error = status_error
+
+    def get_instance_status(self, pod_id):
+        self.calls.append(("status", pod_id))
+        if self.status_error:
+            raise self.status_error
+        return RunPodInstance(pod_id=pod_id, name="trainer", status="EXITED", gpu_name="RTX 4090", cost_per_hr=0.34)
+
+
+@pytest.fixture
+def status_runpod(monkeypatch):
+    monkeypatch.setenv("RUNPOD_API_KEY", "rp-live-123")
+    fake = StatusRunPod()
+    monkeypatch.setattr(api, "RunPodCloudProvider", lambda api_key=None: fake)
+    return fake
+
+
+def test_no_pods_are_listed_before_any_launch(client, status_runpod):
+    assert client.get("/api/cloud/pods").json() == []
+
+
+def test_launched_pods_are_listed_with_their_live_status(client, status_runpod):
+    client.post("/api/cloud/launch", json={"gpu_type": "NVIDIA GeForce RTX 4090", "pod_name": "trainer"})
+
+    pods = client.get("/api/cloud/pods").json()
+
+    assert [pod["pod_id"] for pod in pods] == ["pod_real"]
+    assert pods[0]["status"] == "EXITED"
+    assert pods[0]["cost_per_hr"] == 0.34
+    assert pods[0]["live_error"] is None
+    assert pods[0]["launched_at"]
+
+
+def test_pods_survive_a_restart(client, status_runpod):
+    client.post("/api/cloud/launch", json={"gpu_type": "NVIDIA GeForce RTX 4090", "pod_name": "trainer"})
+
+    pods = TestClient(api.create_app()).get("/api/cloud/pods").json()
+
+    assert [pod["pod_id"] for pod in pods] == ["pod_real"]
+
+
+def test_a_runpod_outage_lists_the_stored_pod_with_the_error(client, status_runpod):
+    client.post("/api/cloud/launch", json={"gpu_type": "NVIDIA GeForce RTX 4090", "pod_name": "trainer"})
+    status_runpod.status_error = RuntimeError("RunPod GraphQL error: timeout")
+
+    pod = client.get("/api/cloud/pods").json()[0]
+
+    assert pod["status"] == "RUNNING"
+    assert "timeout" in pod["live_error"]
+
+
+def test_a_stopped_pod_is_listed_as_terminated_without_asking_runpod(client, status_runpod):
+    client.post("/api/cloud/launch", json={"gpu_type": "NVIDIA GeForce RTX 4090", "pod_name": "trainer"})
+    client.post("/api/cloud/stop/pod_real")
+    status_runpod.calls.clear()
+
+    pod = client.get("/api/cloud/pods").json()[0]
+
+    assert pod["status"] == "TERMINATED"
+    assert status_runpod.calls == []

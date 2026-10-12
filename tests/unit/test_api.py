@@ -14,11 +14,29 @@ def client():
     return TestClient(app)
 
 
-def test_index_page_returns_html(client):
+def test_the_api_no_longer_serves_a_page(client):
     response = client.get("/")
+
     assert response.status_code == 200
-    assert "AUTOTUNE" in response.text
-    assert "Training Cockpit" in response.text
+    assert response.json()["ui"] == "http://localhost:3001"
+    assert client.get("/static/index.html").status_code == 404
+
+
+def test_cors_allows_only_the_ui_origin(client):
+    allowed = client.get("/api/system/status", headers={"Origin": "http://localhost:3001"})
+    other = client.get("/api/system/status", headers={"Origin": "http://evil.example"})
+
+    assert allowed.headers["access-control-allow-origin"] == "http://localhost:3001"
+    assert "access-control-allow-origin" not in other.headers
+
+
+def test_the_ui_origin_is_configurable(monkeypatch):
+    monkeypatch.setenv("AUTOTUNE_UI_ORIGIN", "http://127.0.0.1:4000")
+    client = TestClient(create_app())
+
+    response = client.get("/api/system/status", headers={"Origin": "http://127.0.0.1:4000"})
+
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:4000"
 
 
 def test_system_status(client):
