@@ -61,3 +61,6 @@ outputs/
 
 # Local agent planning docs
 docs/superpowers/
+
+# Uploads and the job database (AUTOTUNE_DATA_DIR)
+data/

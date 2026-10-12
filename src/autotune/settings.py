@@ -16,6 +16,12 @@ ENV_FILE = ROOT / ".env"
 PLACEHOLDER = "mock_key"
 
 
+def data_dir() -> Path:
+    """Where uploads and the job database live: AUTOTUNE_DATA_DIR, else <repo>/data."""
+    configured = os.environ.get("AUTOTUNE_DATA_DIR", "").strip()
+    return Path(configured) if configured else ROOT / "data"
+
+
 @dataclass(frozen=True)
 class Credential:
     env_var: str
