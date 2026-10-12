@@ -11,7 +11,6 @@ from autotune.core.domain.models import (
     ComparisonReport, JobStatus, ModelEndpoint, QuantizationMethod, RunPodConfig, TrainingJob, TrainingObjective,
 )
 from autotune.core.services.recipe_selector import AutoRecipeSelector
-from autotune.infrastructure.backends.mock_backend import MockTrainingBackend
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
@@ -95,7 +94,6 @@ def train(
     base_model: Optional[str] = typer.Option(None, "--base-model", "-m", help="Override default base model"),
     quantization: Optional[str] = typer.Option(None, "--quantization", "-q", help="Override: 'lora_16bit' or 'qlora_4bit_nf4'"),
     objective: Optional[str] = typer.Option(None, "--objective", help="Override: 'sft', 'dpo', or 'grpo'"),
-    mock: bool = typer.Option(False, "--mock", help="Run simulated training without GPUs"),
 ) -> None:
     """Ingest data, auto-tune parameters, and train model."""
     sanitizer = AutoFormatSanitizer()
@@ -128,7 +126,7 @@ def train(
         recipe=recipe,
     )
 
-    backend = MockTrainingBackend() if mock else TrlPeftBackend()
+    backend = TrlPeftBackend()
     console.print(f"[bold yellow]Starting training loop into {output_dir}...[/]")
     try:
         result = backend.train(job, dataset)

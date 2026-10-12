@@ -30,7 +30,7 @@ autotune/
 │   ├── ports/           # Interface protocols (TrainingBackend, ServingProvider, CloudComputeProvider, Storage)
 │   └── services/        # Hardware-aware AutoRecipeSelector (LoRA vs QLoRA, GRPO)
 ├── infrastructure/
-│   ├── backends/        # TrlPeftBackend, MockTrainingBackend, and reward mapping (GRPO, DPO, SFT)
+│   ├── backends/        # TrlPeftBackend and reward mapping (GRPO, DPO, SFT)
 │   ├── sanitizers/      # AutoFormatSanitizer and dataset loaders (Parquet, JSONL, CSV)
 │   ├── storage/         # PolicyCheckpoint serialization and manifest management
 │   ├── serving/         # VLLMServingProvider (OpenAI-compatible inference server)
@@ -72,11 +72,6 @@ uv run autotune train my_data.jsonl --output-dir ./checkpoints/my-model
 To run GRPO reinforcement learning:
 ```bash
 uv run autotune train my_rl_data.parquet --objective grpo --output-dir ./checkpoints/my-rl-model
-```
-
-To run a fast simulation locally without GPUs:
-```bash
-uv run autotune train my_data.jsonl --output-dir ./checkpoints/my-model --mock
 ```
 
 ### 3. Serve with vLLM
