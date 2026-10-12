@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import tempfile
 import threading
 import time
@@ -42,6 +41,7 @@ from autotune.infrastructure.evaluators.openai_client import ModelCallError, Ope
 from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
+from autotune.settings import RUNPOD_API_KEY, credential_value, export_configured_credentials, is_configured
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,7 @@ class RunPodLaunchRequest(BaseModel):
 
 def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
+    export_configured_credentials()
     app = FastAPI(
         title="Autotune Web Cockpit",
         description="LLM Post-Training & Benchmarking Dashboard",
@@ -387,9 +388,9 @@ def create_app() -> FastAPI:
 
     @app.get("/api/cloud/gpus")
     async def get_cloud_gpus(api_key: Optional[str] = None) -> list[dict[str, Any]]:
-        provider = RunPodCloudProvider(api_key=api_key or os.environ.get("RUNPOD_API_KEY", "mock_key"))
+        provider = RunPodCloudProvider(api_key=api_key)
         try:
-            if os.environ.get("RUNPOD_API_KEY") or api_key:
+            if is_configured(credential_value(RUNPOD_API_KEY, api_key)):
                 return provider.list_available_gpus()
         except Exception:
             pass
@@ -404,7 +405,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/cloud/launch")
     async def launch_cloud_pod(req: RunPodLaunchRequest) -> dict[str, Any]:
-        provider = RunPodCloudProvider(api_key=req.api_key or os.environ.get("RUNPOD_API_KEY", "mock_key"))
+        provider = RunPodCloudProvider(api_key=req.api_key)
         config = RunPodConfig(
             gpu_type_id=req.gpu_type,
             pod_name=req.pod_name,
@@ -412,7 +413,7 @@ def create_app() -> FastAPI:
             volume_in_gb=req.disk_gb,
         )
         try:
-            if os.environ.get("RUNPOD_API_KEY") or req.api_key:
+            if is_configured(credential_value(RUNPOD_API_KEY, req.api_key)):
                 inst = provider.create_instance(config)
                 return inst.model_dump()
         except Exception as exc:

@@ -21,6 +21,7 @@ from autotune.infrastructure.evaluators.openai_client import ModelCallError, Ope
 from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
+from autotune.settings import export_configured_credentials
 
 app = typer.Typer(
     name="autotune",
@@ -33,6 +34,13 @@ cloud_app = typer.Typer(
     add_completion=False,
 )
 app.add_typer(cloud_app, name="cloud")
+
+
+@app.callback()
+def _load_credentials() -> None:
+    """Make configured .env credentials visible to the libraries each command uses."""
+    export_configured_credentials()
+
 benchmark_app = typer.Typer(
     name="benchmark",
     help="Measure a trained model against its base on held-out data or Harbor tasks.",

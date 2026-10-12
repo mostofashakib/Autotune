@@ -4,11 +4,48 @@ from autotune.core.domain.models import RunPodConfig
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 
 
-def test_missing_api_key_raises_value_error():
-    provider = RunPodCloudProvider(api_key="")
-    config = RunPodConfig(api_key="", gpu_type_id="RTX 4090")
-    with pytest.raises(ValueError, match="RunPod API key is required"):
-        provider.create_instance(config)
+@pytest.fixture
+def no_runpod_key(tmp_path, monkeypatch):
+    from autotune import settings
+    monkeypatch.setattr(settings, "ENV_FILE", tmp_path / ".env")
+    monkeypatch.delenv("RUNPOD_API_KEY", raising=False)
+
+
+def _never_called(*args, **kwargs):
+    pytest.fail("RunPod must not be called without a configured key")
+
+
+@pytest.mark.parametrize("call", [
+    lambda p: p.create_instance(RunPodConfig(gpu_type_id="RTX 4090")),
+    lambda p: p.get_instance_status("pod_1"),
+    lambda p: p.stop_instance("pod_1"),
+    lambda p: p.list_available_gpus(),
+])
+def test_every_call_needs_a_configured_key_and_names_it(no_runpod_key, call):
+    from autotune.settings import CredentialNotConfigured
+
+    with pytest.raises(CredentialNotConfigured, match="RUNPOD_API_KEY"):
+        call(RunPodCloudProvider(request_fn=_never_called))
+
+
+def test_the_placeholder_key_is_not_a_configured_key(no_runpod_key):
+    from autotune.settings import PLACEHOLDER, CredentialNotConfigured
+
+    with pytest.raises(CredentialNotConfigured):
+        RunPodCloudProvider(api_key=PLACEHOLDER, request_fn=_never_called).list_available_gpus()
+
+
+def test_the_key_comes_from_the_central_settings(no_runpod_key, monkeypatch):
+    monkeypatch.setenv("RUNPOD_API_KEY", "rp-live-123")
+    seen = []
+
+    def graphql(method, url, headers, body):
+        seen.append(headers["Authorization"])
+        return 200, json.dumps({"data": {"gpuTypes": []}}).encode()
+
+    RunPodCloudProvider(request_fn=graphql).list_available_gpus()
+
+    assert seen == ["Bearer rp-live-123"]
 
 
 def test_create_instance_success():

@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import urllib.error
 import urllib.request
 from typing import Any, Callable
 
 from autotune.core.domain.models import RunPodConfig, RunPodInstance
 from autotune.core.ports.cloud import CloudComputeProvider
+from autotune.settings import RUNPOD_API_KEY, require_credential
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +28,10 @@ class RunPodCloudProvider(CloudComputeProvider):
         Initialize RunPod provider.
 
         Args:
-            api_key: RunPod API Key. If omitted, uses RUNPOD_API_KEY environment variable.
+            api_key: RunPod API key. If omitted, RUNPOD_API_KEY comes from autotune.settings.
             request_fn: Optional injected HTTP client function for testability.
         """
-        self._api_key = api_key or os.environ.get("RUNPOD_API_KEY", "")
+        self._key_override = api_key
         self._request_fn = request_fn or self._default_graphql_request
 
     def create_instance(self, config: RunPodConfig) -> RunPodInstance:
@@ -44,9 +44,7 @@ class RunPodCloudProvider(CloudComputeProvider):
         Returns:
             Provisioned RunPodInstance.
         """
-        key = config.api_key or self._api_key
-        if not key:
-            raise ValueError("RunPod API key is required to provision instances.")
+        key = self._key(config.api_key)
 
         mutation = """
         mutation CreatePod($input: PodFindAndDeployOnDemandInput!) {
@@ -98,8 +96,7 @@ class RunPodCloudProvider(CloudComputeProvider):
         Returns:
             RunPodInstance with current status and connection info.
         """
-        if not self._api_key:
-            raise ValueError("RunPod API key is required to query instance status.")
+        key = self._key()
 
         query = """
         query GetPod($podId: String!) {
@@ -126,7 +123,7 @@ class RunPodCloudProvider(CloudComputeProvider):
         }
         """
         variables = {"podId": pod_id}
-        data = self._execute_graphql(query, variables, api_key=self._api_key)
+        data = self._execute_graphql(query, variables, api_key=key)
         pod_data = data.get("data", {}).get("pod")
         if not pod_data:
             errors = data.get("errors", [])
@@ -164,8 +161,7 @@ class RunPodCloudProvider(CloudComputeProvider):
         Returns:
             True if successfully stopped, False otherwise.
         """
-        if not self._api_key:
-            raise ValueError("RunPod API key is required to terminate instances.")
+        key = self._key()
 
         mutation = """
         mutation TerminatePod($podId: String!) {
@@ -174,7 +170,7 @@ class RunPodCloudProvider(CloudComputeProvider):
         """
         variables = {"podId": pod_id}
         try:
-            data = self._execute_graphql(mutation, variables, api_key=self._api_key)
+            data = self._execute_graphql(mutation, variables, api_key=key)
             return "errors" not in data
         except Exception as e:
             logger.error("Failed to terminate RunPod instance %s: %s", pod_id, e)
@@ -198,7 +194,7 @@ class RunPodCloudProvider(CloudComputeProvider):
             }
         }
         """
-        data = self._execute_graphql(query, {}, api_key=self._api_key)
+        data = self._execute_graphql(query, {}, api_key=self._key())
         gpus = data.get("data", {}).get("gpuTypes", [])
         return [
             {
@@ -209,6 +205,10 @@ class RunPodCloudProvider(CloudComputeProvider):
             }
             for g in gpus
         ]
+
+    def _key(self, override: str | None = None) -> str:
+        """The configured RunPod key. Raises CredentialNotConfigured when there is none."""
+        return require_credential(RUNPOD_API_KEY, override or self._key_override)
 
     def _execute_graphql(self, query: str, variables: dict[str, Any], api_key: str) -> dict[str, Any]:
         """Execute a GraphQL request against RunPod API."""
