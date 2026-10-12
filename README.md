@@ -44,6 +44,20 @@ autotune/
 
 ## Quickstart
 
+### Credentials
+Every credential Autotune reads is declared in `src/autotune/settings.py` and listed in `.env.example`:
+
+```bash
+cp .env.example .env   # then replace the mock_key placeholders you need
+```
+
+| Variable | Needed for |
+|---|---|
+| `RUNPOD_API_KEY` | Renting cloud GPUs on RunPod |
+| `HF_TOKEN` | Downloading gated Hugging Face base models such as `meta-llama/*` |
+
+A value set in the environment wins over `.env`. A credential left at `mock_key` counts as not configured, so the feature that needs it refuses to run and names the variable. Model servers for benchmarks and the playground take their keys from env vars you name per run (`--base-key-env`, `--trained-key-env`, `--judge-key-env`).
+
 ### 1. Interactive Web Cockpit
 Launch the full web dashboard in your browser:
 ```bash
@@ -52,10 +66,10 @@ Launch the full web dashboard in your browser:
 uv run autotune ui --port 7860
 ```
 Open `http://localhost:7860` to access:
-- **Training Cockpit**: Drag-and-drop datasets, automatic recipe configuration, and real-time loss telemetry.
-- **RunPod Cloud**: Browse GPU availability, compare hourly pricing, and deploy cloud instances.
-- **Side-by-Side Playground**: Test prompts simultaneously on base and fine-tuned models with benchmark metrics.
-- **vLLM Serving**: One-click inference serving with an OpenAI-compatible API endpoint.
+- **Training Cockpit**: Drag-and-drop datasets, automatic recipe configuration, and the loss the trainer logs. Training needs the `training` extras and a CUDA GPU, and reports a clear error without them.
+- **RunPod Cloud**: Browse RunPod's live GPU catalog and pricing, deploy pods, and terminate them. Needs `RUNPOD_API_KEY`.
+- **Side-by-Side Playground**: Send one prompt to the base and trained endpoints from the benchmark settings and compare their real answers.
+- **vLLM Serving**: Launch vLLM and watch it go from starting to online, or see its log when it fails.
 
 ### 2. Inspect a Dataset
 Inspect a dataset file to see detected task types and recommended tuning settings:
