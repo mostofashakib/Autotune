@@ -74,3 +74,16 @@ def test_an_unreachable_server_fails_and_names_the_endpoint():
 def test_a_malformed_reply_fails_instead_of_scoring_empty_text(body):
     with pytest.raises(ModelCallError, match="malformed"):
         OpenAIChatClient(transport=Recorder(body)).complete(ENDPOINT, [{"role": "user", "content": "hi"}])
+
+
+def test_a_reply_cut_off_before_any_text_fails_and_says_why():
+    body = json.dumps({"choices": [{"finish_reason": "length", "message": {"content": "", "reasoning": "thinking..."}}]}).encode()
+
+    with pytest.raises(ModelCallError, match="max_tokens"):
+        OpenAIChatClient(transport=Recorder(body)).complete(ENDPOINT, [{"role": "user", "content": "hi"}])
+
+
+def test_an_empty_answer_that_finished_normally_is_returned_as_is():
+    body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": ""}}]}).encode()
+
+    assert OpenAIChatClient(transport=Recorder(body)).complete(ENDPOINT, [{"role": "user", "content": "hi"}]) == ""

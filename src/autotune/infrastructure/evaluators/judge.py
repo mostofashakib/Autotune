@@ -35,7 +35,7 @@ class LLMJudge:
         user = f"Task:\n{prompt}\n\nReference answer:\n{reference}\n\nModel answer:\n{answer}"
         reply = self._client.complete(
             self._endpoint, [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": user}],
-            temperature=0.0, max_tokens=256,
+            temperature=0.0, max_tokens=4096,
         )
         return _parse_score(reply)
 

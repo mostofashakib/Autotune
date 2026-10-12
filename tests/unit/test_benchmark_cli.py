@@ -88,3 +88,35 @@ def test_harbor_benchmark_runs_both_models_on_the_tasks(tmp_path, monkeypatch):
 
 def test_the_old_evaluate_command_is_gone():
     assert runner.invoke(cli.app, ["evaluate", "--help"]).exit_code != 0
+
+
+def test_dataset_benchmark_passes_the_answer_token_budget_to_the_model(tmp_path, monkeypatch):
+    budgets = []
+
+    class Recording(ModelPerEndpoint):
+        def complete(self, endpoint, messages, *, temperature=0.7, max_tokens=1024):
+            budgets.append(max_tokens)
+            return super().complete(endpoint, messages)
+
+    monkeypatch.setattr(cli, "OpenAIChatClient", lambda: Recording())
+
+    result = runner.invoke(cli.app, ["benchmark", "dataset", str(_dataset(tmp_path)), *ENDPOINTS, "-k", "1",
+                                     "--max-tokens", "8192", "--output", str(tmp_path / "out")])
+
+    assert result.exit_code == 0, result.output
+    assert budgets == [8192, 8192]
+
+
+def test_dataset_benchmark_defaults_to_a_budget_reasoning_models_fit_in(tmp_path, monkeypatch):
+    budgets = []
+
+    class Recording(ModelPerEndpoint):
+        def complete(self, endpoint, messages, *, temperature=0.7, max_tokens=1024):
+            budgets.append(max_tokens)
+            return super().complete(endpoint, messages)
+
+    monkeypatch.setattr(cli, "OpenAIChatClient", lambda: Recording())
+
+    runner.invoke(cli.app, ["benchmark", "dataset", str(_dataset(tmp_path)), *ENDPOINTS, "-k", "1", "--output", str(tmp_path / "out")])
+
+    assert set(budgets) == {4096}

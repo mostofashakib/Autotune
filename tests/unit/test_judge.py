@@ -47,3 +47,17 @@ def test_an_unusable_verdict_fails(reply):
 def test_a_judge_that_cannot_be_reached_fails():
     with pytest.raises(ModelCallError):
         LLMJudge(FakeClient(ModelCallError("down")), JUDGE).score("p", "r", "a")
+
+
+def test_the_judge_leaves_room_for_reasoning_models_to_think():
+    client = FakeClient('{"score": 1}')
+    captured = {}
+
+    def complete(endpoint, messages, *, temperature=0.7, max_tokens=1024):
+        captured["max_tokens"] = max_tokens
+        return '{"score": 1}'
+
+    client.complete = complete
+    LLMJudge(client, JUDGE).score("p", "r", "a")
+
+    assert captured["max_tokens"] >= 2048

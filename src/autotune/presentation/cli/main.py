@@ -188,6 +188,7 @@ def benchmark_dataset(
     judge_url: Optional[str] = typer.Option(None, "--judge-url", help="OpenAI-compatible URL for an optional LLM judge"),
     judge_model: Optional[str] = typer.Option(None, "--judge-model", help="Judge model name"),
     judge_key_env: Optional[str] = typer.Option(None, "--judge-key-env", help="Env var holding the judge's API key"),
+    max_tokens: int = typer.Option(4096, "--max-tokens", min=1, help="Answer token budget. Reasoning models need room to think"),
 ) -> None:
     """Answer each held-out prompt k times and score it against the reference."""
     if bool(judge_url) != bool(judge_model):
@@ -196,7 +197,7 @@ def benchmark_dataset(
     client = OpenAIChatClient()
     judge = LLMJudge(client, ModelEndpoint(base_url=judge_url, model=judge_model, api_key_env=judge_key_env)) if judge_url else None
     _run_benchmark(
-        "dataset", lambda: DatasetBenchmark(load_sft(data), client, k, judge=judge), k, output,
+        "dataset", lambda: DatasetBenchmark(load_sft(data), client, k, judge=judge, max_tokens=max_tokens), k, output,
         ModelEndpoint(base_url=base_url, model=base_model, api_key_env=base_key_env),
         ModelEndpoint(base_url=trained_url, model=trained_model, api_key_env=trained_key_env),
     )

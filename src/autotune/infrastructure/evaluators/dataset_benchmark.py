@@ -16,7 +16,7 @@ class Judge(Protocol):
 class DatasetBenchmark:
     def __init__(
         self, records: Sequence[SFTRecord], client: ChatClient, k: int,
-        *, judge: Judge | None = None, temperature: float = 0.7, max_tokens: int = 1024,
+        *, judge: Judge | None = None, temperature: float = 0.7, max_tokens: int = 4096,
     ) -> None:
         if not records:
             raise ValueError("the dataset has no held-out records to benchmark")

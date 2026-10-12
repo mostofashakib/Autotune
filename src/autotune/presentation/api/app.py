@@ -77,6 +77,8 @@ class BenchmarkRequest(BaseModel):
     trained: ModelEndpoint
     k: int = Field(default=3, ge=1, le=50)
     judge: Optional[ModelEndpoint] = None
+    # Answer token budget for dataset mode. Reasoning models need room to think.
+    max_tokens: int = Field(default=4096, ge=1, le=131072)
     output_dir: str = "benchmark_results"
     jobs_dir: str = "benchmark_results/harbor_jobs"
 
@@ -93,7 +95,7 @@ def build_benchmark_runner(req: BenchmarkRequest) -> BenchmarkRunner:
         return HarborBenchmark(Path(req.path), req.k, Path(req.jobs_dir))
     client = OpenAIChatClient()
     judge = LLMJudge(client, req.judge) if req.judge else None
-    return DatasetBenchmark(load_sft(Path(req.path)), client, req.k, judge=judge)
+    return DatasetBenchmark(load_sft(Path(req.path)), client, req.k, judge=judge, max_tokens=req.max_tokens)
 
 
 class ServingRequest(BaseModel):

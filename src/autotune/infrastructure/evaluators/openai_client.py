@@ -59,9 +59,13 @@ def _auth_header(endpoint: ModelEndpoint) -> dict[str, str]:
 def _content(raw: bytes, where: str) -> str:
     try:
         payload: Any = json.loads(raw)
-        content = payload["choices"][0]["message"]["content"]
+        choice = payload["choices"][0]
+        content = choice["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:
         raise ModelCallError(f"{where} sent a malformed reply: {raw[:200]!r}") from exc
     if not isinstance(content, str):
         raise ModelCallError(f"{where} sent a malformed reply: content is {type(content).__name__}")
+    # Reasoning models can spend the whole budget thinking and return no answer.
+    if not content.strip() and choice.get("finish_reason") == "length":
+        raise ModelCallError(f"{where} ran out of tokens before answering. Raise max_tokens.")
     return content
