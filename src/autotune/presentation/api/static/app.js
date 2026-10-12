@@ -109,10 +109,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data.vram_gb > 0) {
         vramStatus.textContent = `${data.vram_gb} GB VRAM • ${data.recommended_quantization === "qlora_4bit_nf4" ? "QLoRA Ready" : "LoRA Ready"}`;
       } else {
-        vramStatus.textContent = "CPU Dev Mode • Simulation Ready";
+        vramStatus.textContent = "CPU only • Training needs a CUDA GPU";
       }
     } catch {
-      vramStatus.textContent = "Hardware Connected";
+      vramStatus.textContent = "Hardware status unavailable";
     }
   }
   fetchSystemStatus();
