@@ -6,13 +6,14 @@ import logging
 import os
 import signal
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
-from autotune.core.domain.models import ServingEndpoint
+from autotune.core.domain.models import ServingEndpoint, ServingStatus
 from autotune.core.ports.serving import ServingProvider
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,8 @@ class VLLMServingProvider(ServingProvider):
         self._process_runner = process_runner or subprocess.Popen
         self._active_process: subprocess.Popen[Any] | None = None
         self._current_endpoint: ServingEndpoint | None = None
+        self._log_path: Path | None = None
+        self._log_file: Any = None
 
     def start(
         self,
@@ -44,6 +47,7 @@ class VLLMServingProvider(ServingProvider):
         model_name: str = "",
         port: int = 8000,
         gpu_memory_utilization: float = 0.85,
+        log_path: Path | None = None,
     ) -> ServingEndpoint:
         """
         Launch vLLM server daemon process.
@@ -53,6 +57,7 @@ class VLLMServingProvider(ServingProvider):
             model_name: Alias name to serve the model under.
             port: HTTP port to listen on.
             gpu_memory_utilization: Fraction of GPU VRAM reserved for vLLM KV-cache.
+            log_path: File that receives vLLM's output. Defaults to a per-port file in the temp dir.
 
         Returns:
             ServingEndpoint with base URL and connection status.
@@ -74,16 +79,19 @@ class VLLMServingProvider(ServingProvider):
             str(gpu_memory_utilization),
         ]
 
-        logger.info("Starting vLLM server: %s", " ".join(cmd))
+        # vLLM logs heavily. An unread pipe would fill and stall the server, so output goes to a file.
+        self._log_path = Path(log_path) if log_path else Path(tempfile.gettempdir()) / f"autotune-vllm-{port}.log"
+        self._log_file = self._log_path.open("w", encoding="utf-8")
+        logger.info("Starting vLLM server: %s (log: %s)", " ".join(cmd), self._log_path)
         try:
             self._active_process = self._process_runner(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                stdout=self._log_file,
+                stderr=subprocess.STDOUT,
                 preexec_fn=os.setsid if hasattr(os, "setsid") else None,
             )
         except Exception as e:
+            self._log_file.close()
             logger.error("Failed to start vLLM process: %s", e)
             raise RuntimeError(f"Could not spawn vLLM server: {e}") from e
 
@@ -116,8 +124,28 @@ class VLLMServingProvider(ServingProvider):
             logger.warning("Error stopping vLLM process: %s", e)
         finally:
             self._active_process = None
+            if self._log_file is not None:
+                self._log_file.close()
+                self._log_file = None
             if self._current_endpoint:
                 self._current_endpoint.is_ready = False
+
+    def state(self) -> ServingStatus:
+        """Observed state: no process, exited, answering health checks, or still starting."""
+        if self._active_process is None or self._current_endpoint is None:
+            return ServingStatus(status="stopped")
+        base_url = self._current_endpoint.base_url
+        if self._active_process.poll() is not None:
+            return ServingStatus(status="failed", base_url=base_url, log_tail=self._log_tail())
+        if self.is_healthy(base_url):
+            self._current_endpoint.is_ready = True
+            return ServingStatus(status="online", base_url=base_url)
+        return ServingStatus(status="starting", base_url=base_url)
+
+    def _log_tail(self, lines: int = 40) -> str:
+        if self._log_path is None or not self._log_path.is_file():
+            return ""
+        return "\n".join(self._log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
 
     def is_healthy(self, base_url: str) -> bool:
         """

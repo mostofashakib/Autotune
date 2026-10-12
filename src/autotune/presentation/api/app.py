@@ -417,17 +417,37 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=502, detail=f"RunPod did not terminate pod {pod_id}")
         return {"pod_id": pod_id, "status": "TERMINATED"}
 
-    @app.post("/api/serve/start")
+    @app.post("/api/serve/start", status_code=202)
     async def start_vllm_server(req: ServingRequest) -> dict[str, Any]:
         global _ACTIVE_SERVING
-        _ACTIVE_SERVING = VLLMServingProvider()
+        if _ACTIVE_SERVING is not None:
+            _ACTIVE_SERVING.stop()
+        provider = VLLMServingProvider()
+        try:
+            endpoint = provider.start(model_path=req.model_path, port=req.port)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        _ACTIVE_SERVING = provider
         return {
-            "status": "online",
+            "status": "starting",
             "model_path": req.model_path,
             "port": req.port,
-            "endpoint_url": f"http://127.0.0.1:{req.port}/v1",
-            "openai_compatible": True,
+            "endpoint_url": f"{endpoint.base_url}/v1",
         }
+
+    @app.get("/api/serve/status")
+    async def serving_status() -> dict[str, Any]:
+        if _ACTIVE_SERVING is None:
+            return {"status": "stopped", "base_url": None, "log_tail": ""}
+        return _ACTIVE_SERVING.state().model_dump()
+
+    @app.post("/api/serve/stop")
+    async def stop_vllm_server() -> dict[str, Any]:
+        global _ACTIVE_SERVING
+        if _ACTIVE_SERVING is not None:
+            _ACTIVE_SERVING.stop()
+            _ACTIVE_SERVING = None
+        return {"status": "stopped"}
 
     @app.post("/api/playground/generate")
     async def playground_generate(req: PromptGenerationRequest) -> dict[str, str]:

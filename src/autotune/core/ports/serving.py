@@ -3,15 +3,22 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
-from autotune.core.domain.models import ServingEndpoint
+from autotune.core.domain.models import ServingEndpoint, ServingStatus
 
 
 @runtime_checkable
 class ServingProvider(Protocol):
     """Port for model serving and fast inference (vLLM, TGI, Ollama)."""
 
-    def start(self, model_path: Path | str, model_name: str = "", port: int = 8000, gpu_memory_utilization: float = 0.85) -> ServingEndpoint:
+    def start(
+        self, model_path: Path | str, model_name: str = "", port: int = 8000,
+        gpu_memory_utilization: float = 0.85, log_path: Path | None = None,
+    ) -> ServingEndpoint:
         """Start the serving backend daemon and return endpoint details."""
+        ...
+
+    def state(self) -> ServingStatus:
+        """The server's observed state: stopped, starting, online, or failed with its log tail."""
         ...
 
     def stop(self) -> None:

@@ -89,6 +89,13 @@ class ServingEndpoint(BaseModel):
     is_ready: bool = False
 
 
+class ServingStatus(BaseModel):
+    """What a model server is doing right now, as observed."""
+    status: Literal["stopped", "starting", "online", "failed"]
+    base_url: str | None = None
+    log_tail: str = ""
+
+
 class RunPodConfig(BaseModel):
     """Configuration for provisioning RunPod GPU instances."""
     api_key: str = ""

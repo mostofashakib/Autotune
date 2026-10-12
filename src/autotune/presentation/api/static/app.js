@@ -576,11 +576,26 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({ model_path: "./checkpoints/ui-model", port: 8000 }),
       });
       const data = await res.json();
-      servingStatus.textContent = "ACTIVE • OPENAI COMPATIBLE";
-      servingStatus.className = "badge badge-emerald";
-      btnStartServing.textContent = "✓ Serving Active (Port 8000)";
-      logMessage(`✓ vLLM Serving endpoint launched at ${data.endpoint_url}`);
+      if (!res.ok) throw new Error(data.detail);
+      servingStatus.textContent = "STARTING";
+      logMessage(`vLLM is starting at ${data.endpoint_url}. Loading a model can take minutes.`);
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const state = await (await fetch("/api/serve/status")).json();
+        if (state.status === "online") {
+          servingStatus.textContent = "ACTIVE • OPENAI COMPATIBLE";
+          servingStatus.className = "badge badge-emerald";
+          btnStartServing.textContent = "✓ Serving Active (Port 8000)";
+          logMessage(`✓ vLLM is answering at ${data.endpoint_url}`);
+          return;
+        }
+        if (state.status !== "starting") {
+          throw new Error(state.log_tail ? `vLLM exited:\n${state.log_tail}` : "vLLM is not running");
+        }
+      }
     } catch (err) {
+      servingStatus.textContent = "FAILED";
+      logMessage(`vLLM failed: ${err.message}`);
       btnStartServing.disabled = false;
       btnStartServing.textContent = "Launch vLLM Server";
     }
