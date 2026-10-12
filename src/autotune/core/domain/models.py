@@ -148,6 +148,57 @@ class EvaluationReport(BaseModel):
     summary: str = ""
 
 
+BenchmarkMode = Literal["dataset", "harbor"]
+
+
+class ModelEndpoint(BaseModel):
+    """An OpenAI-compatible model server. Its key stays in the named env var."""
+    base_url: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    api_key_env: str | None = None
+
+
+class SampleResult(BaseModel):
+    """One graded attempt by one model at one task."""
+    task_id: str
+    passed: bool
+    score: float
+    judge_score: float | None = None
+    error: str | None = None
+
+
+class ModelScore(BaseModel):
+    samples: int
+    passed: int
+    errors: int
+    pass_at_1: float
+    pass_at_k: float
+    mean_score: float
+    mean_judge_score: float | None = None
+
+
+class TaskComparison(BaseModel):
+    task_id: str
+    base: ModelScore
+    trained: ModelScore
+    delta_pass_at_1: float
+    delta_mean_score: float
+
+
+class ComparisonReport(BaseModel):
+    """Base and trained models measured on the same tasks with the same k."""
+    mode: BenchmarkMode
+    k: int
+    base_endpoint: ModelEndpoint
+    trained_endpoint: ModelEndpoint
+    base: ModelScore
+    trained: ModelScore
+    tasks: list[TaskComparison]
+    delta_pass_at_1: float
+    delta_pass_at_k: float
+    delta_mean_score: float
+
+
 RolloutOutcome = Literal["success", "failure", "partial_success", "edge_case", "truncated"]
 
 
