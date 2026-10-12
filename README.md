@@ -58,18 +58,26 @@ cp .env.example .env   # then replace the mock_key placeholders you need
 
 A value set in the environment wins over `.env`. A credential left at `mock_key` counts as not configured, so the feature that needs it refuses to run and names the variable. Model servers for benchmarks and the playground take their keys from env vars you name per run (`--base-key-env`, `--trained-key-env`, `--judge-key-env`).
 
-### 1. Interactive Web Cockpit
-Launch the full web dashboard in your browser:
+### 1. Web UI
+The web UI in `frontend/` is a Next.js app built on Forge's design system. It talks to the API that `autotune api` runs.
+
 ```bash
 ./run.sh
-# or
-uv run autotune ui --port 7860
+# or run the two halves yourself
+uv run autotune api --port 7860
+npm --prefix frontend install && npm --prefix frontend run dev   # http://localhost:3001
 ```
-Open `http://localhost:7860` to access:
-- **Training Cockpit**: Drag-and-drop datasets, automatic recipe configuration, and the loss the trainer logs. Training needs the `training` extras and a CUDA GPU, and reports a clear error without them.
-- **RunPod Cloud**: Browse RunPod's live GPU catalog and pricing, deploy pods, and terminate them. Needs `RUNPOD_API_KEY`.
-- **Side-by-Side Playground**: Send one prompt to the base and trained endpoints from the benchmark settings and compare their real answers.
-- **vLLM Serving**: Launch vLLM and watch it go from starting to online, or see its log when it fails.
+
+| Page | What you do there |
+|---|---|
+| Home | See the device, VRAM, recommended quantization, missing credentials, serving state, and recent runs |
+| Training | Upload a dataset, review the detected format and auto-selected recipe, change any of it, and start a run. Open a run for live progress, the loss the trainer logged, its log, and cancel. Training needs the `training` extras and a CUDA GPU, and fails with a clear error without them. |
+| Benchmark | Compare a base and a trained model on a held-out dataset or Harbor tasks, with an optional LLM judge. Open a run for its measured report. |
+| Serving | Start or stop vLLM on a checkpoint, watch its state and log, and send one prompt to two models side by side |
+| Cloud | Browse RunPod's live GPU catalog, launch a pod, and terminate the pods you launched. Needs `RUNPOD_API_KEY`. |
+| Settings | See which credentials are configured (never their values) and where to set them |
+
+Runs and uploads persist under `AUTOTUNE_DATA_DIR` (default `./data`, gitignored), so they survive a restart. A run that was in progress when the API restarted shows as interrupted. The API accepts cross-origin requests only from the UI, at `AUTOTUNE_UI_ORIGIN` (default `http://localhost:3001`). Point the UI at a different API with `NEXT_PUBLIC_API_URL` (see `frontend/.env.example`).
 
 ### 2. Inspect a Dataset
 Inspect a dataset file to see detected task types and recommended tuning settings:

@@ -49,13 +49,27 @@ uv pip install -e "$ROOT" --quiet
 
 ok "Environment ready."
 
+# ── Frontend dependencies ────────────────────────────────────────────────────
+FRONTEND_DIR="$ROOT/frontend"
+if ! command -v npm &>/dev/null; then
+  err "npm is required for the web UI. Install Node.js 20 or newer."
+  exit 1
+fi
+if [[ ! -d "$FRONTEND_DIR/node_modules" ]]; then
+  log "Installing web UI dependencies..."
+  npm --prefix "$FRONTEND_DIR" install --silent --no-fund --no-audit
+fi
+ok "Web UI ready."
+
 # ── Stop previous instances ──────────────────────────────────────────────────
 "$ROOT/kill.sh" >/dev/null 2>&1 || true
 
-log "Launching Autotune Web Cockpit UI..."
-echo ""
-ok "Dashboard online at: ${CYAN}http://localhost:7860${RESET}"
-echo -e "${BOLD}Press Ctrl+C to stop.${RESET}"
-echo ""
+log "Starting the API on ${CYAN}http://localhost:7860${RESET}"
+uv run autotune api --host 127.0.0.1 --port 7860 &
 
-exec uv run autotune ui --host 0.0.0.0 --port 7860
+log "Starting the web UI on ${CYAN}http://localhost:3001${RESET}"
+echo -e "${BOLD}Press Ctrl+C to stop both.${RESET}"
+echo ""
+npm --prefix "$FRONTEND_DIR" run dev &
+
+wait
