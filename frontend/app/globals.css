@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+/* Forge's design system. Autotune keeps the paper ground, ink, and lime accent,
+   and swaps Forge's orange primary for its own teal. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono, ui-monospace, monospace);
+}
+
+:root {
+  --background: oklch(0.93 0.025 84);
+  --foreground: oklch(0.155 0.014 65);
+  --card: oklch(0.975 0.018 86);
+  --primary: oklch(0.58 0.13 200);
+  --primary-foreground: oklch(0.985 0.01 88);
+  --accent: oklch(0.89 0.19 116);
+  --accent-foreground: oklch(0.19 0.04 108);
+  --muted: oklch(0.875 0.025 82);
+  --muted-foreground: oklch(0.42 0.025 63);
+  --destructive: oklch(0.56 0.23 25);
+  --border: oklch(0.69 0.035 72);
+}
+
+@utility app-width {
+  @apply mx-auto w-full max-w-[88rem] px-5 sm:px-8;
+}
+
+@layer base {
+  * { @apply border-border; }
+  html { scrollbar-gutter: stable; }
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at 82% -12%, oklch(0.62 0.13 200 / 0.24), transparent 38%),
+      radial-gradient(circle at 8% 42%, oklch(0.88 0.08 105 / 0.18), transparent 32%);
+    background-attachment: fixed;
+    min-width: 320px;
+  }
+  ::selection { background: oklch(0.82 0.17 85); color: oklch(0.16 0.02 62); }
+}
+
+@layer utilities {
+  /* Shell */
+  .app-header {
+    @apply sticky top-0 z-50 border-b border-white/15 text-white;
+    background: oklch(0.145 0.015 65 / 0.97);
+    box-shadow: 0 10px 35px oklch(0.12 0.01 65 / 0.22);
+    backdrop-filter: blur(16px);
+  }
+  .app-header::after {
+    content: "";
+    @apply absolute bottom-0 left-0 h-[3px] w-full;
+    background: linear-gradient(90deg, var(--primary) 0 22%, var(--accent) 22% 29%, transparent 29%);
+  }
+  .app-header__rail { @apply app-width flex h-[4.75rem] items-center gap-6; }
+  .brand-mark { @apply flex shrink-0 items-center gap-3 text-white; }
+  .brand-mark__icon {
+    @apply grid size-10 place-items-center border-2 border-primary bg-background text-foreground transition-transform duration-300;
+    box-shadow: 4px 4px 0 var(--accent);
+  }
+  .brand-mark:hover .brand-mark__icon { transform: rotate(-4deg) scale(1.04); }
+  .brand-mark__icon svg { @apply size-7; }
+  .brand-mark__word { @apply block text-base font-black leading-none tracking-[0.32em]; }
+  .app-nav { @apply ml-auto flex h-full items-stretch overflow-x-auto; }
+  .app-nav__label { @apply sr-only lg:not-sr-only; }
+  .app-nav__link {
+    @apply relative flex items-center gap-2 px-3 text-[0.7rem] font-medium uppercase tracking-[0.12em] text-white/55 transition-colors lg:px-5;
+  }
+  .app-nav__link::after {
+    content: "";
+    @apply absolute bottom-0 left-1/2 h-[3px] w-0 -translate-x-1/2 bg-accent transition-all duration-300;
+  }
+  .app-nav__link:hover { @apply bg-white/[0.045] text-white; }
+  .app-nav__link--active { @apply bg-white/[0.06] text-white; }
+  .app-nav__link--active::after { @apply w-full; }
+  .app-nav__index { @apply hidden font-mono text-[0.55rem] text-primary lg:block; }
+  .app-main { @apply app-width flex-1 space-y-6 py-9 sm:py-12; }
+
+  /* Page hero */
+  .page-hero {
+    @apply relative grid overflow-hidden border border-foreground/75 bg-card md:grid-cols-[1fr_auto];
+    box-shadow: 7px 7px 0 oklch(0.20 0.02 62 / 0.15);
+  }
+  .page-hero__copy { @apply relative p-6 sm:p-8; }
+  .page-hero__eyebrow { @apply font-mono text-[0.56rem] font-semibold uppercase tracking-[0.22em] text-primary; }
+  .page-hero__eyebrow a { @apply underline-offset-4 hover:underline; }
+  .page-hero h1 { @apply mt-4 text-[clamp(2rem,4.5vw,4.2rem)] font-semibold leading-[0.85] tracking-[-0.06em]; }
+  .page-hero h1 em { @apply not-italic text-primary; }
+  .page-hero__copy p { @apply mt-5 max-w-xl text-sm leading-6 text-muted-foreground; }
+  .readout { @apply grid grid-cols-2 border-t border-foreground/25 bg-foreground text-background md:w-80 md:border-l md:border-t-0; }
+  .readout > div { @apply flex min-h-24 flex-col justify-between gap-2 border-b border-r border-background/15 p-4 even:border-r-0; }
+  .readout span { @apply font-mono text-[0.5rem] uppercase tracking-[0.16em] text-background/45; }
+  .readout strong { @apply break-all font-mono text-lg font-medium; }
+
+  /* Panels and forms */
+  .grid-2 { @apply grid items-start gap-5 xl:grid-cols-2; }
+  .panel { @apply border border-foreground/30 bg-card; box-shadow: 5px 5px 0 oklch(0.20 0.02 62 / 0.12); }
+  .panel__heading { @apply flex items-center justify-between gap-3 border-b border-foreground/25 px-5 py-4; }
+  .panel__heading > div { @apply flex items-center gap-3; }
+  .panel__heading > div span { @apply font-mono text-[0.58rem] text-primary; }
+  .panel__heading h2 { @apply text-xs font-semibold uppercase tracking-[0.16em]; }
+  .panel__heading > p { @apply font-mono text-[0.55rem] uppercase tracking-wider text-muted-foreground; }
+  .panel__body { @apply space-y-4 p-5; }
+  .panel__empty { @apply p-5 text-sm text-muted-foreground; }
+  .field { @apply block space-y-2; }
+  .field__label { @apply flex items-center justify-between text-xs font-medium; }
+  .field__label small { @apply font-mono text-[0.55rem] font-normal uppercase tracking-wider text-muted-foreground; }
+  .field-row { @apply grid gap-4 sm:grid-cols-2; }
+  .field-row--3 { @apply grid gap-4 sm:grid-cols-3; }
+  .input { @apply h-11 w-full border border-foreground/30 bg-background/50 px-3 text-sm focus:border-primary focus:outline-none disabled:opacity-50; }
+  .input--mono { @apply font-mono text-xs; }
+  textarea.input { @apply h-auto min-h-24 py-2; }
+  .segmented { @apply grid grid-cols-2 gap-2; }
+  .segmented label { @apply flex cursor-pointer items-center justify-center border border-foreground/25 bg-background/40 px-3 py-2.5 text-xs font-medium uppercase tracking-wider transition-all; }
+  .segmented label:has(input:checked) { @apply border-foreground bg-foreground text-background; box-shadow: 3px 3px 0 var(--primary); }
+  .segmented input { @apply sr-only; }
+  .check { @apply flex items-center gap-2 text-xs font-medium; }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 bg-primary px-5 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-primary-foreground transition-all disabled:cursor-not-allowed disabled:opacity-40;
+    box-shadow: 4px 4px 0 var(--foreground);
+  }
+  .btn:hover:not(:disabled) { @apply -translate-y-0.5 bg-foreground text-background; box-shadow: 6px 6px 0 var(--primary); }
+  .btn--ghost { @apply border border-foreground/40 bg-transparent text-foreground; box-shadow: none; }
+  .btn--ghost:hover:not(:disabled) { box-shadow: 3px 3px 0 var(--primary); }
+  .btn--danger { @apply bg-destructive text-white; }
+  .btn--block { @apply w-full; }
+
+  /* Notices */
+  .notice { @apply border px-4 py-3 text-sm leading-6; }
+  .notice strong { @apply block text-xs font-semibold uppercase tracking-wider; }
+  .notice code { @apply font-mono text-xs; }
+  .notice--error { @apply border-red-700/40 bg-red-50 text-red-900; }
+  .notice--warn { @apply border-amber-700/40 bg-amber-50 text-amber-900; }
+  .notice--ok { @apply border-emerald-700/40 bg-emerald-50 text-emerald-900; }
+  .notice--info { @apply border-foreground/25 bg-background/50 text-foreground; }
+
+  /* Status */
+  .status { @apply inline-flex items-center gap-2 border px-2 py-0.5 font-mono text-[0.55rem] uppercase tracking-wider; }
+  .status i { @apply size-1.5 rounded-full bg-current; }
+  .status--live { @apply border-primary/50 bg-primary/10 text-foreground; }
+  .status--live i { @apply animate-pulse bg-primary; }
+  .status--ok { @apply border-emerald-700/40 bg-emerald-50 text-emerald-800; }
+  .status--bad { @apply border-red-700/40 bg-red-50 text-red-800; }
+  .status--warn { @apply border-amber-700/40 bg-amber-50 text-amber-800; }
+  .status--idle { @apply border-foreground/30 bg-muted text-foreground; }
+
+  /* Tables */
+  .table-wrap { @apply overflow-x-auto; }
+  .table { @apply w-full min-w-[36rem] border-collapse text-left text-xs; }
+  .table th { @apply border-b border-foreground/25 px-5 py-3 font-mono text-[0.5rem] font-normal uppercase tracking-[0.16em] text-muted-foreground; }
+  .table td { @apply border-b border-foreground/10 px-5 py-3 align-top; }
+  .table tr:last-child td { @apply border-b-0; }
+  .table a { @apply font-semibold text-primary underline-offset-4 hover:underline; }
+  .mono { @apply font-mono text-[0.68rem]; }
+  .num-pos { @apply text-emerald-700; }
+  .num-neg { @apply text-red-700; }
+
+  /* Console */
+  .console { @apply flex min-h-72 flex-col overflow-hidden border border-foreground/80 bg-foreground text-background; box-shadow: 6px 6px 0 var(--primary); }
+  .console__bar { @apply flex h-11 items-center gap-3 border-b border-background/15 px-4 font-mono text-[0.55rem] uppercase tracking-[0.15em] text-background/45; }
+  .console__output { @apply max-h-[28rem] min-h-0 flex-1 overflow-y-auto p-5 font-mono text-[0.68rem]; }
+  .console__output p { @apply whitespace-pre-wrap break-all leading-6 text-background/75; }
+  .console__idle { @apply text-xs text-background/40; }
+  .progress { @apply h-2 overflow-hidden bg-muted; }
+  .progress > div { @apply h-full bg-primary transition-all duration-500; }
+
+  /* Key-value grid */
+  .facts { @apply grid grid-cols-2 gap-px bg-foreground/15 sm:grid-cols-4; }
+  .facts > div { @apply flex flex-col gap-1 bg-card p-4; }
+  .facts span { @apply font-mono text-[0.5rem] uppercase tracking-[0.16em] text-muted-foreground; }
+  .facts strong { @apply break-all font-mono text-sm font-medium; }
+
+  /* Playground */
+  .answers { @apply grid gap-4 md:grid-cols-2; }
+  .answer { @apply min-h-32 border border-foreground/25 bg-background/40 p-4; }
+  .answer h3 { @apply mb-2 font-mono text-[0.55rem] uppercase tracking-[0.16em] text-muted-foreground; }
+  .answer p { @apply whitespace-pre-wrap text-sm leading-6; }
+}
