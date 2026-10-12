@@ -142,3 +142,16 @@ def test_a_missing_harbor_install_fails_with_a_hint(tasks, tmp_path, monkeypatch
 def test_k_must_be_positive(tasks, tmp_path):
     with pytest.raises(ValueError, match="k"):
         HarborBenchmark(tasks, k=0, jobs_dir=tmp_path / "jobs", executable="/usr/bin/harbor")
+
+
+def test_a_keyless_server_never_receives_a_key_from_the_callers_environment(tasks, tmp_path, monkeypatch):
+    from autotune.infrastructure.evaluators.harbor_benchmark import KEYLESS_SERVER_KEY
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-real-openai-key")
+    harbor = FakeHarbor([_trial("hello", 1.0)])
+
+    _bench(tasks, tmp_path, harbor).run(MODEL)
+
+    env = harbor.calls[0][1]
+    assert env["OPENAI_API_KEY"] == KEYLESS_SERVER_KEY
+    assert "sk-real-openai-key" not in env.values()

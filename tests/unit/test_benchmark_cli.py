@@ -120,3 +120,13 @@ def test_dataset_benchmark_defaults_to_a_budget_reasoning_models_fit_in(tmp_path
     runner.invoke(cli.app, ["benchmark", "dataset", str(_dataset(tmp_path)), *ENDPOINTS, "-k", "1", "--output", str(tmp_path / "out")])
 
     assert set(budgets) == {4096}
+
+
+def test_with_one_sample_pass_at_1_is_printed_once_per_line(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "OpenAIChatClient", lambda: ModelPerEndpoint())
+
+    result = runner.invoke(cli.app, ["benchmark", "dataset", str(_dataset(tmp_path)), *ENDPOINTS, "-k", "1", "--output", str(tmp_path / "out")])
+
+    summary = [line for line in result.output.splitlines() if line.startswith(("Base:", "Trained:", "Change:"))]
+    assert len(summary) == 3
+    assert all(line.count("pass@1") == 1 for line in summary)

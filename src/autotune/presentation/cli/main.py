@@ -243,11 +243,13 @@ def _print_report(report: ComparisonReport) -> None:
     console.print(table)
     for label, model in (("Base", report.base), ("Trained", report.trained)):
         judge = f", judge {model.mean_judge_score:.2f}" if model.mean_judge_score is not None else ""
+        pass_at_k = f", pass@{report.k} {model.pass_at_k:.2f}" if report.k > 1 else ""
         console.print(
-            f"{label}: pass@1 {model.pass_at_1:.2f}, pass@{report.k} {model.pass_at_k:.2f}, "
+            f"{label}: pass@1 {model.pass_at_1:.2f}{pass_at_k}, "
             f"mean score {model.mean_score:.2f}{judge}, {model.errors} errored of {model.samples} samples"
         )
-    console.print(f"[bold]Change: pass@1 {report.delta_pass_at_1:+.2f}, pass@{report.k} {report.delta_pass_at_k:+.2f}[/]")
+    delta_k = f", pass@{report.k} {report.delta_pass_at_k:+.2f}" if report.k > 1 else ""
+    console.print(f"[bold]Change: pass@1 {report.delta_pass_at_1:+.2f}{delta_k}[/]")
 
 
 @cloud_app.command("list-gpus")

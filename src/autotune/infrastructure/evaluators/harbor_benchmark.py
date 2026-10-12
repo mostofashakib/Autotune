@@ -22,6 +22,9 @@ from autotune.core.domain.models import ModelEndpoint, SampleResult
 logger = logging.getLogger(__name__)
 
 # (command, environment) -> finished process
+# LiteLLM's openai/ provider refuses to run without a key. Keyless OpenAI-compatible
+# servers (Ollama, local vLLM) ignore it, and Ollama documents sending any value.
+KEYLESS_SERVER_KEY = "keyless-server"
 Runner = Callable[[list[str], dict[str, str]], subprocess.CompletedProcess]
 
 
@@ -74,9 +77,13 @@ class HarborBenchmark:
 
 
 def _key_env(model: ModelEndpoint) -> dict[str, str]:
-    """Harbor's LiteLLM `openai/` provider reads its key from OPENAI_API_KEY."""
+    """The key Harbor's LiteLLM `openai/` provider sends, set explicitly every time.
+
+    It is never inherited from the caller's environment, so a real OpenAI key is
+    never sent to whatever server `model.base_url` points at.
+    """
     if not model.api_key_env:
-        return {}
+        return {"OPENAI_API_KEY": KEYLESS_SERVER_KEY}
     key = os.environ.get(model.api_key_env, "").strip()
     if not key:
         raise HarborError(f"{model.api_key_env} is not set, and {model.model} needs it as its API key")
