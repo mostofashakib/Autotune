@@ -36,12 +36,3 @@ def test_load_sample_dataset(client):
     assert data["total_records"] > 0
     assert "recipe" in data
     assert data["recipe"]["objective"] == "grpo"
-
-
-def test_playground_generate(client):
-    payload = {"prompt": "Solve optimization task #1", "model_type": "trained"}
-    response = client.post("/api/playground/generate", json=payload)
-    assert response.status_code == 200
-    data = response.json()
-    assert "response" in data
-    assert len(data["response"]) > 0

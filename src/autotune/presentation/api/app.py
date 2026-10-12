@@ -133,8 +133,16 @@ class ServingRequest(BaseModel):
 
 class PromptGenerationRequest(BaseModel):
     model_config = ConfigDict(protected_namespaces=())
-    prompt: str
-    model_type: str = "trained"  # "base" or "trained"
+    prompt: str = Field(min_length=1)
+    # The OpenAI-compatible server to ask, such as the base or the trained model.
+    model: ModelEndpoint
+    max_tokens: int = Field(default=1024, ge=1, le=131072)
+
+    @model_validator(mode="after")
+    def _prompt_has_text(self) -> "PromptGenerationRequest":
+        if not self.prompt.strip():
+            raise ValueError("prompt must contain text")
+        return self
 
 
 class RunPodLaunchRequest(BaseModel):
@@ -450,28 +458,13 @@ def create_app() -> FastAPI:
         return {"status": "stopped"}
 
     @app.post("/api/playground/generate")
-    async def playground_generate(req: PromptGenerationRequest) -> dict[str, str]:
-        prompt = req.prompt.strip()
-        if not prompt:
-            return {"response": "Please enter a prompt to test."}
-
-        # Simulated contrasting output highlighting post-training improvements
-        if req.model_type == "trained":
-            response = (
-                f"### Optimized Response (Fine-Tuned Policy):\n\n"
-                f"Analyzing constraints for '{prompt[:40]}...':\n\n"
-                f"1. **Execution Steps**: Identified 3 distinct parameters requiring verification.\n"
-                f"2. **Structured Output**:\n"
-                f"```json\n"
-                f'{{\n  "status": "success",\n  "verified": true,\n  "confidence": 0.98\n}}\n'
-                f"```\n"
-                f"3. **Resolution**: Direct resolution applied without superfluous conversational filler."
+    def playground_generate(req: PromptGenerationRequest) -> dict[str, str]:
+        try:
+            answer = OpenAIChatClient().complete(
+                req.model, [{"role": "user", "content": req.prompt.strip()}], max_tokens=req.max_tokens,
             )
-        else:
-            response = (
-                f"### Baseline Response (Pre-Trained Base Model):\n\n"
-                f"Well, there are many ways to approach '{prompt[:40]}...'. As an AI language model, I might suggest considering a variety of factors. First of all, it depends on what you mean. You could try different things, but make sure to check the instructions."
-            )
-        return {"response": response}
+        except ModelCallError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"response": answer}
 
     return app

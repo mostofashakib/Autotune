@@ -543,21 +543,26 @@ document.addEventListener("DOMContentLoaded", () => {
     compTrainedOutput.innerHTML = "<em>Generating fine-tuned response...</em>";
 
     try {
-      const [resBase, resTrained] = await Promise.all([
-        fetch("/api/playground/generate", {
+      // Both answers come from the endpoints entered on the benchmark card above.
+      const ask = async (urlField, modelField, output) => {
+        const res = await fetch("/api/playground/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, model_type: "base" }),
-        }).then((r) => r.json()),
-        fetch("/api/playground/generate", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ prompt, model_type: "trained" }),
-        }).then((r) => r.json()),
+          body: JSON.stringify({
+            prompt,
+            model: {
+              base_url: document.getElementById(urlField).value.trim(),
+              model: document.getElementById(modelField).value.trim(),
+            },
+          }),
+        });
+        const body = await res.json();
+        output.textContent = res.ok ? body.response : `Error: ${typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail)}`;
+      };
+      await Promise.all([
+        ask("benchBaseUrl", "benchBaseModel", compBaseOutput),
+        ask("benchTrainedUrl", "benchTrainedModel", compTrainedOutput),
       ]);
-
-      compBaseOutput.textContent = resBase.response;
-      compTrainedOutput.textContent = resTrained.response;
     } catch (err) {
       compBaseOutput.textContent = `Error: ${err.message}`;
     } finally {
