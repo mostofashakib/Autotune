@@ -58,3 +58,6 @@ outputs/
 *.pt
 *.safetensors
 *.gguf
+
+# Local agent planning docs
+docs/superpowers/
