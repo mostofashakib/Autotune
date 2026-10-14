@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 import pandas as pd
@@ -11,7 +12,12 @@ from autotune.core.ports.sanitizer import DataSanitizer
 
 
 class AutoFormatSanitizer(DataSanitizer):
-    """Parses arbitrary dataset files into normalized ChatMessage records."""
+    """Normalize structured rows with order-independent task precedence.
+
+    Reward labels outrank preference pairs, then tool use, then chat. Only
+    valid retained rows influence classification. Chosen/rejected rewards
+    validate preference order and do not by themselves select GRPO.
+    """
 
     def sanitize(self, file_path: Path, val_split_ratio: float = 0.1) -> CleanedDataset:
         if not file_path.exists():
@@ -42,9 +48,11 @@ class AutoFormatSanitizer(DataSanitizer):
                 continue
 
             records.append(normalized)
-            if "total_reward" in row or "per_step_rewards" in row or "rewards" in row or "reward" in row:
+            if any(_reward_present(row.get(key)) for key in ("total_reward", "per_step_rewards", "rewards", "reward")):
                 task_type = TaskType.RL_GRPO
-            elif task_type != TaskType.RL_GRPO and any("tool" in m.role for m in normalized.messages):
+            elif task_type != TaskType.RL_GRPO and "chosen" in normalized.metadata and "rejected" in normalized.metadata:
+                task_type = TaskType.PREFERENCE
+            elif task_type not in (TaskType.RL_GRPO, TaskType.PREFERENCE) and any(m.role == "tool" for m in normalized.messages):
                 task_type = TaskType.TOOL_USE
 
         if not records:
@@ -98,6 +106,12 @@ class AutoFormatSanitizer(DataSanitizer):
         return rows
 
     def _normalize_row(self, row: dict[str, Any], idx: int) -> DatasetRecord | None:
+        if not isinstance(row, dict):
+            return None
+        # Missing columns in mixed CSV/Parquet rows arrive as NaN.
+        row = {k: v for k, v in row.items() if v is not None and not (isinstance(v, float) and math.isnan(v))}
+        if "chosen" in row or "rejected" in row:
+            return _preference(row, idx)
         messages: list[ChatMessage] = []
 
         # Schema 1: Standard 'messages' array
@@ -146,3 +160,41 @@ class AutoFormatSanitizer(DataSanitizer):
         record_id = str(row.get("id") or row.get("episode_id") or f"rec_{idx:06d}")
         meta = {k: v for k, v in row.items() if k not in ("messages", "prompt", "completion", "instruction", "output", "question", "answer")}
         return DatasetRecord(id=record_id, messages=messages, metadata=meta)
+
+
+def _reward_present(value: Any) -> bool:
+    if isinstance(value, list):
+        return bool(value) and all(_reward_present(item) for item in value)
+    try:
+        return value is not None and not isinstance(value, bool) and math.isfinite(float(value))
+    except (ValueError, TypeError):
+        return False
+
+
+def _response(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if isinstance(value, list):
+        answers = [m.get("content") for m in value if isinstance(m, dict) and m.get("role") == "assistant"]
+        if answers and all(isinstance(a, str) and a.strip() for a in answers):
+            return "\n".join(a.strip() for a in answers)
+    return ""
+
+
+def _preference(row: dict[str, Any], idx: int) -> DatasetRecord | None:
+    prompt = row.get("prompt")
+    chosen, rejected = _response(row.get("chosen")), _response(row.get("rejected"))
+    if not isinstance(prompt, str) or not prompt.strip() or not chosen or not rejected or chosen == rejected:
+        return None
+    if "chosen_reward" in row or "rejected_reward" in row:
+        if not all(_reward_present(row.get(k)) for k in ("chosen_reward", "rejected_reward")):
+            return None
+        if float(row["chosen_reward"]) <= float(row["rejected_reward"]):
+            return None
+    return DatasetRecord(
+        id=str(row.get("id") or f"rec_{idx:06d}"), prompt=prompt.strip(),
+        messages=[ChatMessage(role="user", content=prompt.strip()), ChatMessage(role="assistant", content=chosen)],
+        metadata={**{k: v for k, v in row.items() if k != "prompt"}, "chosen": chosen, "rejected": rejected},
+    )

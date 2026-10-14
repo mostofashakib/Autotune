@@ -9,6 +9,8 @@ from typing import Any
 from autotune.core.domain.models import (
     CheckpointResult,
     CleanedDataset,
+    DatasetRecord,
+    TrainingObjective,
     JobStatus,
     QuantizationMethod,
     TrainingJob,
@@ -90,14 +92,8 @@ class TrlPeftBackend(TrainingBackend):
         model.print_trainable_parameters()
 
         # 4. Prepare Hugging Face dataset format
-        train_data = [
-            {"messages": [m.model_dump() for m in r.messages]}
-            for r in dataset.train_records
-        ]
-        val_data = [
-            {"messages": [m.model_dump() for m in r.messages]}
-            for r in dataset.val_records
-        ]
+        train_data = training_rows(dataset.train_records, recipe.objective)
+        val_data = training_rows(dataset.val_records, recipe.objective)
 
         from datasets import Dataset as HfDataset
         hf_train = HfDataset.from_list(train_data)
@@ -106,7 +102,18 @@ class TrlPeftBackend(TrainingBackend):
         # 5. Launch Trainer based on Objective (GRPO vs SFT)
         from trl import SFTConfig, SFTTrainer
 
-        if recipe.objective.value == "grpo":
+        if recipe.objective == TrainingObjective.DPO:
+            from trl import DPOConfig, DPOTrainer
+            training_args = DPOConfig(
+                output_dir=str(out_dir), learning_rate=recipe.learning_rate,
+                per_device_train_batch_size=recipe.batch_size,
+                gradient_accumulation_steps=recipe.gradient_accumulation_steps,
+                num_train_epochs=recipe.epochs, max_length=recipe.max_seq_length,
+                report_to="none",
+            )
+            trainer = DPOTrainer(model=model, args=training_args, train_dataset=hf_train,
+                                 eval_dataset=hf_val, processing_class=tokenizer)
+        elif recipe.objective.value == "grpo":
             try:
                 from trl import GRPOConfig, GRPOTrainer
                 grpo_args = GRPOConfig(
@@ -221,3 +228,16 @@ def _progress_reporter(base: type, on_progress: ProgressCallback) -> Any:
                 on_progress(update)
 
     return ProgressReporter()
+
+
+def training_rows(records: list[DatasetRecord], objective: TrainingObjective) -> list[dict[str, Any]]:
+    """Translate records for the selected trainer without discarding DPO alternatives."""
+    if objective != TrainingObjective.DPO:
+        return [{"messages": [m.model_dump() for m in record.messages]} for record in records]
+    rows = []
+    for record in records:
+        chosen, rejected = record.metadata.get("chosen"), record.metadata.get("rejected")
+        if not record.prompt or not isinstance(chosen, str) or not isinstance(rejected, str) or not chosen or not rejected or chosen == rejected:
+            raise ValueError("DPO requires a prompt and distinct chosen/rejected responses in every row. Upload only preference rows or select SFT.")
+        rows.append({"prompt": record.prompt, "chosen": chosen, "rejected": rejected})
+    return rows
