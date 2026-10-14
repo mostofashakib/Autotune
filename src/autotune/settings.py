@@ -89,3 +89,21 @@ def _env_file_values() -> dict[str, str]:
         key, _, value = line.partition("=")
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
+
+
+def setting_value(name: str, default: str = "") -> str:
+    """Read a non-secret setting with environment precedence over .env."""
+    return os.environ.get(name, _env_file_values().get(name, default)).strip()
+
+
+def document_endpoint():
+    """The configured document generator. A model name is required even for Ollama."""
+    from autotune.core.domain.models import ModelEndpoint
+    model = setting_value("AUTOTUNE_DOCUMENT_MODEL")
+    if not model or model == PLACEHOLDER:
+        raise ValueError("Set AUTOTUNE_DOCUMENT_MODEL to a model served by AUTOTUNE_DOCUMENT_ENDPOINT (default http://localhost:11434/v1).")
+    key_env = setting_value("AUTOTUNE_DOCUMENT_API_KEY_ENV") or None
+    if key_env:
+        key = require_credential(Credential(key_env, "document generation"))
+        os.environ[key_env] = key
+    return ModelEndpoint(base_url=setting_value("AUTOTUNE_DOCUMENT_ENDPOINT", "http://localhost:11434/v1"), model=model, api_key_env=key_env)

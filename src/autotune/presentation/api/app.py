@@ -41,6 +41,7 @@ from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportErr
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 from autotune.infrastructure.storage.job_store import JobStore
+from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.settings import (
     CREDENTIALS,
     ENV_FILE,
@@ -195,7 +196,7 @@ def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
     export_configured_credentials()
     store = JobStore(data_dir() / "autotune.db")
-    for kind in ("training", "benchmark"):
+    for kind in ("training", "benchmark", "ingestion"):
         store.mark_interrupted(kind)
     # Live runs started by this server. Finished and earlier runs are read from the store.
     jobs: dict[str, dict[str, Any]] = {}
@@ -251,47 +252,75 @@ def create_app() -> FastAPI:
             "recommended_quantization": "qlora_4bit_nf4" if vram <= 32 else "lora_16bit",
         }
 
+    def inspect_upload(dest_path: Path, state: dict[str, Any]) -> dict[str, Any]:
+        def progress(update: dict[str, int]) -> None:
+            state["progress"] = update
+            store.save("ingestion", state["job_id"], state)
+
+        try:
+            cleaned = load_dataset(dest_path, progress)
+            recipe = AutoRecipeSelector().select_recipe(cleaned)
+            result = {
+                "file_name": dest_path.name, "file_path": str(dest_path),
+                "task_type": cleaned.task_type.value, "total_records": cleaned.total_records,
+                "train_records": len(cleaned.train_records), "val_records": len(cleaned.val_records),
+                "dropped_count": cleaned.dropped_count, "warnings": cleaned.warnings,
+                "recipe": recipe.model_dump(mode="json"), "progress": state["progress"],
+                "preview": [{
+                    "prompt": r.prompt or (r.messages[0].content if r.messages else ""),
+                    "completion": r.completions[0] if r.completions else (r.messages[-1].content if len(r.messages) > 1 else ""),
+                } for r in cleaned.train_records[:3]],
+            }
+            state.update(status="completed", result=result)
+            return result
+        except Exception as exc:
+            logger.exception("Dataset ingestion failed for %s", dest_path.name)
+            state.update(status="failed", error=str(exc))
+            dest_path.unlink(missing_ok=True)
+            raise
+        finally:
+            store.save("ingestion", state["job_id"], state)
+
     @app.post("/api/dataset/upload")
-    async def upload_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
+    async def upload_dataset(file: UploadFile = File(...), background: bool = False) -> Any:
         name = _upload_name(file.filename)
+        if any(j.get("dataset_name") == name and j["status"] == "running" for j in store.list("ingestion")):
+            raise HTTPException(status_code=409, detail="This dataset is being processed. Wait for it to finish.")
         uploads = _uploads_dir()
         uploads.mkdir(parents=True, exist_ok=True)
         dest_path = uploads / name
-        dest_path.write_bytes(await file.read())
-
-        sanitizer = AutoFormatSanitizer()
+        data = await file.read(100 * 1024 * 1024 + 1)
+        if len(data) > 100 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Upload exceeds 100 MiB")
+        dest_path.write_bytes(data)
+        state = {"job_id": f"ingest_{uuid.uuid4().hex[:12]}", "dataset_name": name,
+                 "created_at": _now(), "status": "running", "progress": {}, "error": None}
+        store.save("ingestion", state["job_id"], state)
+        if background:
+            def work() -> None:
+                try:
+                    inspect_upload(dest_path, state)
+                except Exception:
+                    pass  # inspect_upload persists and logs the failure for polling clients.
+            threading.Thread(target=work, daemon=True).start()
+            return JSONResponse(status_code=202, content={"job_id": state["job_id"]})
         try:
-            cleaned = sanitizer.sanitize(dest_path)
+            return await asyncio.to_thread(inspect_upload, dest_path, state)
         except Exception as exc:
-            dest_path.unlink(missing_ok=True)
-            raise HTTPException(status_code=400, detail=f"Failed to parse dataset: {exc}")
+            raise HTTPException(status_code=400, detail=f"Failed to parse dataset: {exc}") from exc
 
-        selector = AutoRecipeSelector()
-        recipe = selector.select_recipe(cleaned)
-
-        return {
-            "file_name": file.filename,
-            "file_path": str(dest_path),
-            "task_type": cleaned.task_type.value,
-            "total_records": cleaned.total_records,
-            "train_records": len(cleaned.train_records),
-            "val_records": len(cleaned.val_records),
-            "dropped_count": cleaned.dropped_count,
-            "recipe": recipe.model_dump(),
-            "preview": [
-                {
-                    "prompt": r.prompt or (r.messages[0].content if r.messages else ""),
-                    "completion": r.completions[0] if r.completions else (r.messages[-1].content if len(r.messages) > 1 else ""),
-                }
-                for r in cleaned.train_records[:3]
-            ],
-        }
+    @app.get("/api/dataset/status/{job_id}")
+    async def dataset_status(job_id: str) -> dict[str, Any]:
+        state = store.get("ingestion", job_id)
+        if state is None:
+            raise HTTPException(status_code=404, detail="Dataset job not found")
+        return state
 
     @app.post("/api/training/start", status_code=202)
     async def start_training(req: TrainingStartRequest) -> dict[str, Any]:
         dataset_path = _resolve_dataset(req.dataset_name)
         try:
-            cleaned = AutoFormatSanitizer().sanitize(dataset_path)
+            cleaned = load_dataset(dataset_path)
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"could not parse dataset: {exc}") from exc
         recipe = AutoRecipeSelector().select_recipe(

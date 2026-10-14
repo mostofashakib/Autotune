@@ -150,3 +150,15 @@ Both write `benchmark_results/benchmark_report.json`. A model that stops answeri
 ## Integration with Forge
 
 Need execution-verified training data? Use [Forge](https://github.com/mostofashakib/Forge) to synthesize sandboxed tasks, simulated personas, and multi-turn agent trajectories. Autotune natively ingests Forge export bundles (`sft_pairs.jsonl`, `preference_pairs.jsonl`, `grpo_rollouts.parquet`). The two never import or call each other. Forge data reaches Autotune as exported files or Harbor task directories.
+
+### Document ingestion
+
+Install `uv sync --extra documents` for PDF (`pypdf`), Word (`python-docx`), and HTML (`beautifulsoup4`) extraction. Upload `.pdf`, `.docx`, `.txt`, `.md`, or `.html`, or ZIP a folder of documents. Scanned PDFs need OCR before upload. Archives are limited to 1,000 files, 20 MiB per document, and 100 MiB total uncompressed size.
+
+Set `AUTOTUNE_DOCUMENT_MODEL` to the exact model name on your generator server. `AUTOTUNE_DOCUMENT_ENDPOINT` defaults to `http://localhost:11434/v1` for local Ollama. For authenticated servers, set `AUTOTUNE_DOCUMENT_API_KEY_ENV` to the name of your API key variable. Unset keys and `mock_key` stop ingestion. Values load from the environment or `.env`.
+
+Chunk settings are `AUTOTUNE_DOCUMENT_CHUNK_TOKENS=800`, `AUTOTUNE_DOCUMENT_OVERLAP_TOKENS=100`, and `AUTOTUNE_DOCUMENT_MAX_CHUNKS=200`. Counts use local lexical tokens (words and punctuation), independent of the generator's tokenizer. Pair bounds are `AUTOTUNE_DOCUMENT_MIN_PAIR_TOKENS=8` and `AUTOTUNE_DOCUMENT_MAX_PAIR_TOKENS=1024`. Exceeding the chunk cap stops ingestion instead of truncating input.
+
+The generator produces Q&A and instruction/response pairs. Length bounds, normalized hashes, token-set similarity, lexical support, and an LLM grounding check filter them. These checks reduce unsupported answers but are not a factual guarantee. Each record retains its source filename and chunk ID. Splits keep documents separate. A single document uses chunk groups and reports a warning about overlapping text. Fewer than two surviving groups produces no held-out split and a warning.
+
+The UI displays documents read, chunks made, pairs generated, and pairs kept. `POST /api/dataset/upload` retains its synchronous response. Add `?background=true` to receive a job ID, then poll `GET /api/dataset/status/{job_id}`. Generated splits persist beside the upload as `.cleaned.json`, with a source hash to prevent stale reuse. Training reuses those exact records. The `.heldout.jsonl` file works with the existing dataset benchmark. Generator or grounding failures fail the whole upload.

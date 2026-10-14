@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { ErrorNotice, PageHero, Panel, StatusBadge } from "@/components/ui";
-import { apiPost, apiUpload, describeError } from "@/lib/api";
+import { apiGet, apiPost, apiUpload, describeError } from "@/lib/api";
 import { formatWhen } from "@/lib/format";
 import type { Recipe, TrainingSummary, UploadedDataset } from "@/lib/types";
 import { usePolling } from "@/lib/usePolling";
@@ -24,11 +24,22 @@ export default function TrainingPage() {
   const [busy, setBusy] = useState<"upload" | "start" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [ingestionProgress, setIngestionProgress] = useState<Record<string, number>>({});
+
   async function upload(file: File) {
     setBusy("upload");
     setError(null);
     try {
-      const uploaded = await apiUpload<UploadedDataset>("/api/dataset/upload", file);
+      setIngestionProgress({});
+      const { job_id } = await apiUpload<{ job_id: string }>("/api/dataset/upload?background=true", file);
+      let uploaded: UploadedDataset;
+      for (;;) {
+        const state = await apiGet<{ status: string; progress: Record<string, number>; error: string | null; result?: UploadedDataset }>(`/api/dataset/status/${job_id}`);
+        setIngestionProgress(state.progress);
+        if (state.status === "completed" && state.result) { uploaded = state.result; break; }
+        if (["failed", "interrupted"].includes(state.status)) throw new Error(state.error ?? "Dataset ingestion failed");
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
       setDataset(uploaded);
       setForm(overridesFrom(uploaded));
     } catch (cause) {
@@ -67,14 +78,14 @@ export default function TrainingPage() {
       <ErrorNotice message={error} />
 
       <div className="grid-2">
-        <Panel index="A" title="Dataset" aside="JSONL, JSON, CSV, Parquet">
+        <Panel index="A" title="Dataset" aside="Structured data or documents (ZIP for a folder)">
           <div className="panel__body">
             <label className="field">
               <span className="field__label">File <small>saved to the data directory</small></span>
               <input
                 className="input"
                 type="file"
-                accept=".jsonl,.json,.csv,.parquet"
+                accept=".jsonl,.json,.csv,.tsv,.parquet,.pq,.pdf,.docx,.txt,.md,.html,.zip"
                 disabled={busy !== null}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
@@ -82,9 +93,10 @@ export default function TrainingPage() {
                 }}
               />
             </label>
-            {busy === "upload" ? <p className="text-sm text-muted-foreground">Inspecting…</p> : null}
+            {busy === "upload" ? <p className="text-sm text-muted-foreground">Inspecting… {Object.entries(ingestionProgress).map(([key, value]) => `${key.replaceAll("_", " ")}: ${value}`).join(" · ")}</p> : null}
             {dataset ? (
               <>
+                {dataset.warnings?.map((warning) => <p key={warning} role="status">{warning}</p>)}
                 <div className="facts">
                   <div><span>Format</span><strong>{dataset.task_type}</strong></div>
                   <div><span>Records</span><strong>{dataset.total_records}</strong></div>
