@@ -1,6 +1,6 @@
 # Autotune
 
-**Automated LLM Post-Training & Benchmarking — Turn raw domain documents and datasets into fine-tuned models without deep learning infrastructure expertise.**
+**LLM Post-Training & Benchmarking Engine — Turn raw domain documents and datasets into fine-tuned models without deep learning infrastructure expertise.**
 
 Autotune gives developers, researchers, and domain specialists a complete post-training pipeline without requiring machine learning engineering experience. Upload your own documents (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.zip`) or structured data (`.csv`, `.tsv`, `.json`, `.jsonl`, `.parquet`). Autotune does the heavy lifting: extracting and chunking text, generating grounded training pairs, fitting model weights to your GPU's VRAM to prevent CUDA Out-Of-Memory errors, choosing optimal tuning recipes (SFT, DPO, or GRPO), running training, and benchmarking quality against the base model with pass@k evaluations.
 
