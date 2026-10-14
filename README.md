@@ -2,7 +2,7 @@
 
 **LLM Post Training & Benchmarking Engine — Plug in your data, get a frontier model out**
 
-Autotune handles the entire post-training workflow for large language models. Feed it raw CSV, JSONL, or Parquet datasets. Autotune cleans the inputs, selects the right base model and tuning recipe, runs training, and verifies quality against baseline models with automated benchmarks.
+Autotune handles the entire post-training workflow for large language models. Feed it raw documents (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.zip`) or structured datasets (`.csv`, `.tsv`, `.json`, `.jsonl`, `.parquet`). Autotune extracts clean text, generates grounded pairs, detects conversational or preference formats, selects the right base model and tuning recipe for your GPU, runs training (SFT, DPO, or GRPO), and verifies quality against baseline models with automated benchmarks.
 
 Works directly with [Forge](https://github.com/mostofashakib/Forge) for execution-verified synthetic datasets.
 
@@ -10,14 +10,17 @@ Works directly with [Forge](https://github.com/mostofashakib/Forge) for executio
 
 ## Why Autotune?
 
-- **Automatic Ingestion:** Drop in raw CSV, JSONL, or Parquet files without converting schemas. Autotune identifies conversation turns, prompt and response pairs, or tool calls automatically.
-- **Hardware-Aware LoRA and QLoRA:**
-  - **QLoRA (4-bit NF4):** Uses bitsandbytes 4-bit NormalFloat. The catalog spans 0.5B to 14.7B parameters, with estimated QLoRA minima of 5GB to 19GB. Larger batches and sequences need more memory.
-  - **LoRA (16-bit):** Selected when the chosen model fits at 16-bit precision. Small models fit on smaller GPUs, while 14B models need more than 24GB.
-- **Reinforcement Learning with GRPO:** Train reasoning models with Group Relative Policy Optimization, customizable rollouts, and group rewards.
-- **vLLM Serving:** Serve models with an OpenAI-compatible endpoint in one command.
-- **Cloud GPUs on RunPod:** Rent on-demand RTX 4090, A100, and H100 GPUs directly from your terminal.
-- **Side-by-Side Benchmark:** Measure your trained model against its base on held-out data or on Harbor agent tasks, and get per-task pass@1 and pass@k from real samples.
+- **Unstructured Document Ingestion:** Upload raw PDF, Word, HTML, text, Markdown files, or ZIP archives without manual preprocessing. Autotune extracts clean text, chunks by token counts, generates grounded training pairs through an LLM, filters duplicates and unsupported answers, and splits train/validation data cleanly by document.
+- **Automatic Format Detection:** Drop in CSV, JSONL, or Parquet files without converting schemas. Autotune detects conversational turns, prompt/response pairs, tool use, reward labels, and preference pairs (`prompt` + `chosen` + `rejected`) automatically.
+- **Hardware-Aware Model Catalog:**
+  - Choose from 11 verified open-weight instruct models (0.5B to 14.7B parameters across Qwen, Llama, Gemma, Mistral, and Phi) or provide a custom Hugging Face ID.
+  - **QLoRA (4-bit NF4):** Uses bitsandbytes 4-bit NormalFloat with estimated minima of 5GB to 19GB VRAM.
+  - **LoRA (16-bit):** Selected when the model fits at 16-bit precision within available GPU memory.
+- **Beginner Presets & Expert Controls:** Basic view offers Quick, Balanced, and Thorough training intensity presets, while Advanced exposes full hyperparameter control (LoRA rank/alpha, batch size, gradient accumulation, sequence length) backed by server-side preflight VRAM estimation.
+- **Reinforcement & Preference Learning:** Train alignment and reasoning models with Direct Preference Optimization (DPO) or Group Relative Policy Optimization (GRPO).
+- **vLLM Serving:** Serve checkpoints with an OpenAI-compatible endpoint in one command.
+- **Cloud GPUs on RunPod:** Rent on-demand RTX 4090, A100, and H100 GPUs directly from your terminal or UI.
+- **Side-by-Side Benchmark:** Measure your trained model against its base on held-out data or on Harbor agent tasks, reporting per-task pass@1 and pass@k from real samples.
 
 ---
 
@@ -26,17 +29,19 @@ Works directly with [Forge](https://github.com/mostofashakib/Forge) for executio
 ```
 autotune/
 ├── core/
-│   ├── domain/          # Entities: Recipe, RolloutRecord, PreferenceRecord, ServingEndpoint, RunPodConfig
-│   ├── ports/           # Interface protocols (TrainingBackend, ServingProvider, CloudComputeProvider, Storage)
-│   └── services/        # Hardware-aware AutoRecipeSelector (LoRA vs QLoRA, GRPO)
+│   ├── domain/          # Entities: Recipe, ModelSpec, TrainingSettings, DatasetRecord, ServingEndpoint
+│   ├── ports/           # Interface protocols (DataSanitizer, TrainingBackend, ServingProvider, CloudComputeProvider)
+│   └── services/        # Hardware-aware AutoRecipeSelector (LoRA vs QLoRA, memory fitting, GRPO/DPO)
 ├── infrastructure/
 │   ├── backends/        # TrlPeftBackend and reward mapping (GRPO, DPO, SFT)
-│   ├── sanitizers/      # AutoFormatSanitizer and dataset loaders (Parquet, JSONL, CSV)
-│   ├── storage/         # PolicyCheckpoint serialization and manifest management
+│   ├── sanitizers/      # AutoFormatSanitizer, DocumentIngestor, and dataset loaders
+│   ├── models/          # Hub metadata resolution for custom Hugging Face models
+│   ├── storage/         # PolicyCheckpoint serialization and SQLite JobStore
 │   ├── serving/         # VLLMServingProvider (OpenAI-compatible inference server)
 │   ├── cloud/           # RunPodCloudProvider (GraphQL remote GPU lifecycle)
 │   └── evaluators/      # Dataset and Harbor benchmarks, model client, scoring, judge, metrics (pass@k)
 └── presentation/
+    ├── api/             # FastAPI cockpit routes and background workers
     └── cli/             # Typer CLI commands (inspect, train, serve, benchmark, cloud)
 ```
 
@@ -55,6 +60,9 @@ cp .env.example .env   # then replace the mock_key placeholders you need
 |---|---|
 | `RUNPOD_API_KEY` | Renting cloud GPUs on RunPod |
 | `HF_TOKEN` | Downloading gated Hugging Face base models such as `meta-llama/*` |
+| `AUTOTUNE_DOCUMENT_MODEL` | Generator model name for document ingestion (e.g. `gemma3:1b`, `qwen2.5:7b`) |
+| `AUTOTUNE_DOCUMENT_ENDPOINT` | Generator endpoint (default: `http://localhost:11434/v1` for local Ollama) |
+| `AUTOTUNE_DOCUMENT_API_KEY_ENV` | Optional env var holding the API key for authenticated generator endpoints |
 
 A value set in the environment wins over `.env`. A credential left at `mock_key` counts as not configured, so the feature that needs it refuses to run and names the variable. Model servers for benchmarks and the playground take their keys from env vars you name per run (`--base-key-env`, `--trained-key-env`, `--judge-key-env`).
 
@@ -71,7 +79,7 @@ npm --prefix frontend install && npm --prefix frontend run dev   # http://localh
 | Page | What you do there |
 |---|---|
 | Home | See the device, VRAM, recommended quantization, missing credentials, serving state, and recent runs |
-| Training | Upload a dataset, review the detected format and auto-selected recipe, change any of it, and start a run. Open a run for live progress, the loss the trainer logged, its log, and cancel. Training needs the `training` extras and a CUDA GPU, and fails with a clear error without them. |
+| Training | Upload structured files or documents (ZIP for folders), review the detected format and recipe, choose presets or advanced overrides, and start a run with live loss and step logs. Training needs the `training` extras and a CUDA GPU. |
 | Benchmark | Compare a base and a trained model on a held-out dataset or Harbor tasks, with an optional LLM judge. Open a run for its measured report. |
 | Serving | Start or stop vLLM on a checkpoint, watch its state and log, and send one prompt to two models side by side |
 | Cloud | Browse RunPod's live GPU catalog, launch a pod, and terminate the pods you launched. Needs `RUNPOD_API_KEY`. |
@@ -80,29 +88,31 @@ npm --prefix frontend install && npm --prefix frontend run dev   # http://localh
 Runs and uploads persist under `AUTOTUNE_DATA_DIR` (default `./data`, gitignored), so they survive a restart. A run that was in progress when the API restarted shows as interrupted. The API accepts cross-origin requests only from the UI, at `AUTOTUNE_UI_ORIGIN` (default `http://localhost:3001`). Point the UI at a different API with `NEXT_PUBLIC_API_URL` (see `frontend/.env.example`).
 
 ### 2. Inspect a Dataset
-Inspect a dataset file to see detected task types and recommended tuning settings:
+Inspect a structured dataset file or document archive to see detected task types and recommended tuning settings:
 ```bash
 uv run autotune inspect my_data.jsonl
 ```
 
-### 2. Train a Model (SFT or GRPO)
+### 3. Train a Model (SFT, DPO, or GRPO)
 Run post-training with automated model selection and LoRA/QLoRA tuning:
 ```bash
+# Standard Supervised Fine-Tuning (SFT)
 uv run autotune train my_data.jsonl --output-dir ./checkpoints/my-model
-```
 
-To run GRPO reinforcement learning:
-```bash
+# Direct Preference Optimization (DPO)
+uv run autotune train my_preference_data.jsonl --objective dpo --output-dir ./checkpoints/my-dpo-model
+
+# Reinforcement Learning with GRPO
 uv run autotune train my_rl_data.parquet --objective grpo --output-dir ./checkpoints/my-rl-model
 ```
 
-### 3. Serve with vLLM
+### 4. Serve with vLLM
 Launch an OpenAI-compatible vLLM server:
 ```bash
 uv run autotune serve ./checkpoints/my-model --port 8000
 ```
 
-### 4. Cloud GPUs on RunPod
+### 5. Cloud GPUs on RunPod
 List available GPU instances and deploy on-demand training pods:
 ```bash
 # List GPUs and pricing
@@ -118,7 +128,7 @@ uv run autotune cloud status <pod_id>
 uv run autotune cloud stop <pod_id>
 ```
 
-### 5. Benchmark Against the Base Model
+### 6. Benchmark Against the Base Model
 Serve both models from any OpenAI-compatible server (vLLM, RunPod, Ollama), then compare them on the same tasks. Every number in the report comes from a recorded sample.
 
 Held-out dataset mode answers each prompt `k` times and scores it against the reference (exact match, or token F1 of at least 0.8). Add `--judge-url` and `--judge-model` for an LLM judge as a second score.
@@ -139,19 +149,17 @@ uv run autotune benchmark harbor ./tasks \
 
 Both write `benchmark_results/benchmark_report.json`. A model that stops answering, a judge that fails, or a Harbor run with no trial results stops the benchmark with an error instead of reporting partial numbers. Crashed Harbor trials count as failures and are reported as errors. Reasoning models need room to think, so raise `--max-tokens` (default 4096) if one runs out of tokens. API keys stay in the env vars you name with `--base-key-env`, `--trained-key-env`, and `--judge-key-env`.
 
-### 6. Development Scripts
+### 7. Development Scripts
 ```bash
-./run.sh    # Starts development environment
+./run.sh    # Starts development environment (API and frontend)
 ./kill.sh   # Stops all Autotune background processes
 ```
 
 ---
 
-## Integration with Forge
+## Detailed Capabilities
 
-Need execution-verified training data? Use [Forge](https://github.com/mostofashakib/Forge) to synthesize sandboxed tasks, simulated personas, and multi-turn agent trajectories. Autotune natively ingests Forge export bundles (`sft_pairs.jsonl`, `preference_pairs.jsonl`, `grpo_rollouts.parquet`). The two never import or call each other. Forge data reaches Autotune as exported files or Harbor task directories.
-
-### Document ingestion
+### Document Ingestion
 
 Install `uv sync --extra documents` for PDF (`pypdf`), Word (`python-docx`), and HTML (`beautifulsoup4`) extraction. Upload `.pdf`, `.docx`, `.txt`, `.md`, or `.html`, or ZIP a folder of documents. Scanned PDFs need OCR before upload. Archives are limited to 1,000 files, 20 MiB per document, and 100 MiB total uncompressed size.
 
@@ -163,11 +171,11 @@ The generator produces Q&A and instruction/response pairs. Length bounds, normal
 
 The UI displays documents read, chunks made, pairs generated, and pairs kept. `POST /api/dataset/upload` retains its synchronous response. Add `?background=true` to receive a job ID, then poll `GET /api/dataset/status/{job_id}`. Generated splits persist beside the upload as `.cleaned.json`, with a source hash to prevent stale reuse. Training reuses those exact records. The `.heldout.jsonl` file works with the existing dataset benchmark. Generator or grounding failures fail the whole upload.
 
-### Raw preference data
+### Raw Preference Data
 
 CSV, TSV, JSON, JSONL, and Parquet accept `prompt`, `chosen`, and `rejected`. Responses are strings or message lists containing assistant text. Both alternatives survive normalization and feed the DPO trainer. If reward scores are supplied, both must be finite and `chosen_reward` must exceed `rejected_reward`. Empty or identical alternatives are rejected. Task precedence is reward labels, preference pairs, tool messages, then chat, independent of row order. Mixed files select the highest-priority objective, but DPO training requires preference fields on every row and fails clearly otherwise.
 
-### Model catalog
+### Model Catalog
 
 `GET /api/models?vram=24` returns all 11 entries with parameter counts, licenses, gating, tool support, context limits, estimated VRAM, `fits`, and recommended quantization. Omitting `vram` uses detected hardware. The UI groups models by size and disables entries that exceed the estimate. Default selection chooses the largest fitting ungated model, restricting tool datasets to tool-capable entries. With no detected GPU, inspection still works and training reports its hardware requirement.
 
@@ -175,7 +183,7 @@ IDs were checked on the Hugging Face Hub on 2026-10-14: [Qwen 0.5B](https://hugg
 
 Estimates in `core/domain/model_catalog.py` follow the memory components in [Hugging Face's memory guide](https://huggingface.co/docs/transformers/model_memory_anatomy). They are engineering budgets, not measured guarantees: frozen weights and scales, adapter state, checkpointed activations, and 4 GiB workspace. Baselines assume batch 1, 2048 tokens, and rank 16. A 14.7B model needs an estimated 19GB for QLoRA or 38GB for 16-bit LoRA. Gated entries need `HF_TOKEN` and license acceptance. The custom-model option resolves parameter count and context from Hub metadata without downloading weights and fails if reliable size metadata is unavailable.
 
-### Basic and Advanced training settings
+### Basic and Advanced Training Settings
 
 Basic shows model, objective, and intensity. Presets live in `core/domain/training_settings.py` and scale the data-driven recommendation:
 
@@ -192,3 +200,9 @@ GRPO stays at or below `0.00002`. Advanced starts collapsed and exposes quantiza
 Preflight checks reject invalid numbers, sequences beyond the model context, and memory estimates above detected VRAM. Memory scales with parameter count, precision, batch size, sequence length, rank, and objective. Gradient accumulation adds steps rather than concurrent activations. Auto selection reduces batch size and increases accumulation to fit. Errors explain which settings to reduce. CPU-only inspection remains available, but the real trainer requires CUDA before downloading a model. These settings add no environment variables.
 
 Training extras require TRL 0.18 or newer and Transformers 4.49 or newer. SFT and DPO pass the configured sequence length, batch size, accumulation, and epochs to their trainers. DPO uses conversational alternatives so TRL applies the model's chat template. A GRPO initialization error now stops the job instead of switching the objective to SFT.
+
+---
+
+## Integration with Forge
+
+Need execution-verified training data? Use [Forge](https://github.com/mostofashakib/Forge) to synthesize sandboxed tasks, simulated personas, and multi-turn agent trajectories. Autotune natively ingests Forge export bundles (`sft_pairs.jsonl`, `preference_pairs.jsonl`, `grpo_rollouts.parquet`). The two never import or call each other. Forge data reaches Autotune as exported files or Harbor task directories.
