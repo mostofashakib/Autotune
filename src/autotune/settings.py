@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from autotune.core.domain.models import ModelEndpoint
+
 ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = ROOT / ".env"
 PLACEHOLDER = "mock_key"
@@ -96,9 +98,8 @@ def setting_value(name: str, default: str = "") -> str:
     return os.environ.get(name, _env_file_values().get(name, default)).strip()
 
 
-def document_endpoint():
+def document_endpoint() -> ModelEndpoint:
     """The configured document generator. A model name is required even for Ollama."""
-    from autotune.core.domain.models import ModelEndpoint
     model = setting_value("AUTOTUNE_DOCUMENT_MODEL")
     if not model or model == PLACEHOLDER:
         raise ValueError("Set AUTOTUNE_DOCUMENT_MODEL to a model served by AUTOTUNE_DOCUMENT_ENDPOINT (default http://localhost:11434/v1).")

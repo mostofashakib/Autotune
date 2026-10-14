@@ -58,3 +58,33 @@ def test_dpo_dataset_adapter_preserves_rejected_response(tmp_path):
     from autotune.infrastructure.backends.trl_peft_backend import training_rows
     dataset = sanitize(tmp_path, [{'prompt':'p','chosen':'good','rejected':'bad'}])
     assert training_rows(dataset.train_records, TrainingObjective.DPO) == [{'prompt':'p','chosen':'good','rejected':'bad'}]
+
+
+def test_list_reward_values_are_rejected_as_malformed_rows(tmp_path):
+    dataset = sanitize(tmp_path, [{'prompt':'p','chosen':'good','rejected':'bad','chosen_reward':[2],'rejected_reward':[1]}, {'prompt':'valid','chosen':'yes','rejected':'no'}])
+    assert dataset.total_records == 1 and dataset.dropped_count == 1
+
+
+def test_dpo_training_data_is_conversational_for_chat_templates(tmp_path):
+    from autotune.infrastructure.backends.trl_peft_backend import conversational_dpo_rows
+    rows = conversational_dpo_rows([{'prompt':'question','chosen':'good','rejected':'bad'}])
+    assert rows == [{'prompt':[{'role':'user','content':'question'}], 'chosen':[{'role':'assistant','content':'good'}], 'rejected':[{'role':'assistant','content':'bad'}]}]
+
+
+@pytest.mark.parametrize('extension', ['csv', 'parquet'])
+def test_preference_detection_in_tabular_files(tmp_path, extension):
+    import pandas as pd
+    path = tmp_path / ('pairs.' + extension)
+    rows = [{'prompt':'p','chosen':'good','rejected':'bad','chosen_reward':2,'rejected_reward':1}]
+    frame = pd.DataFrame(rows)
+    if extension == 'csv': frame.to_csv(path, index=False)
+    else: frame.to_parquet(path, index=False)
+    assert AutoFormatSanitizer().sanitize(path).task_type == TaskType.PREFERENCE
+
+
+def test_parquet_message_preferences_keep_assistant_text(tmp_path):
+    import pandas as pd
+    path = tmp_path / 'pairs.parquet'
+    pd.DataFrame([{'prompt':'p', 'chosen':[{'role':'assistant','content':'good'}], 'rejected':[{'role':'assistant','content':'bad'}]}]).to_parquet(path)
+    record = AutoFormatSanitizer().sanitize(path).train_records[0]
+    assert record.metadata['chosen'] == 'good'

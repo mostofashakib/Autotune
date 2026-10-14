@@ -174,3 +174,21 @@ CSV, TSV, JSON, JSONL, and Parquet accept `prompt`, `chosen`, and `rejected`. Re
 IDs were checked on the Hugging Face Hub on 2026-10-14: [Qwen 0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct), [Qwen 1.5B](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct), [Qwen 3B](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct), [Qwen 7B](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct), [Qwen 14B](https://huggingface.co/Qwen/Qwen2.5-14B-Instruct), [Llama 1B](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct), [Llama 3B](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct), [Llama 8B](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct), [Gemma 9B](https://huggingface.co/google/gemma-2-9b-it), [Mistral 7B](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3), and [Phi 4 Mini](https://huggingface.co/microsoft/Phi-4-mini-instruct). Context limits use the standard model configuration, without optional context extension. Licenses differ, and several models are open-weight rather than OSI open source.
 
 Estimates in `core/domain/model_catalog.py` follow the memory components in [Hugging Face's memory guide](https://huggingface.co/docs/transformers/model_memory_anatomy). They are engineering budgets, not measured guarantees: frozen weights and scales, adapter state, checkpointed activations, and 4 GiB workspace. Baselines assume batch 1, 2048 tokens, and rank 16. A 14.7B model needs an estimated 19GB for QLoRA or 38GB for 16-bit LoRA. Gated entries need `HF_TOKEN` and license acceptance. The custom-model option resolves parameter count and context from Hub metadata without downloading weights and fails if reliable size metadata is unavailable.
+
+### Basic and Advanced training settings
+
+Basic shows model, objective, and intensity. Presets live in `core/domain/training_settings.py` and scale the data-driven recommendation:
+
+| Intensity | Epoch multiplier (rounded up) | Learning-rate multiplier |
+|---|---:|---:|
+| Quick | 0.5 | 0.5 |
+| Balanced | 1 | 1 |
+| Thorough | 1.5 | 0.75 |
+
+GRPO stays at or below `0.00002`. Advanced starts collapsed and exposes quantization, LoRA rank and alpha, learning rate, epochs, batch size, gradient accumulation, and sequence length. Changed values are marked against the upload recommendation. Reset restores that recommendation. Selecting a new model or objective refreshes its recommended settings from the server.
+
+`POST /api/recipe/recommend` accepts `dataset_name` and optional `base_model` and `objective`, returning a recipe and all presets. `POST /api/training/start` accepts `intensity` (default `balanced`), `gradient_accumulation_steps`, and `max_seq_length` alongside its existing fields. Omitted settings retain auto values. Explicit numeric overrides take precedence over the intensity preset.
+
+Preflight checks reject invalid numbers, sequences beyond the model context, and memory estimates above detected VRAM. Memory scales with parameter count, precision, batch size, sequence length, rank, and objective. Gradient accumulation adds steps rather than concurrent activations. Auto selection reduces batch size and increases accumulation to fit. Errors explain which settings to reduce. CPU-only inspection remains available, but the real trainer requires CUDA before downloading a model. These settings add no environment variables.
+
+Training extras require TRL 0.18 or newer and Transformers 4.49 or newer. SFT and DPO pass the configured sequence length, batch size, accumulation, and epochs to their trainers. DPO uses conversational alternatives so TRL applies the model's chat template. A GRPO initialization error now stops the job instead of switching the objective to SFT.

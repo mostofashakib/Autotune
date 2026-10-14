@@ -114,9 +114,18 @@ class AutoFormatSanitizer(DataSanitizer):
             return _preference(row, idx)
         messages: list[ChatMessage] = []
 
+        raw_messages = row.get("messages")
+        if hasattr(raw_messages, "tolist"):
+            raw_messages = raw_messages.tolist()
+        if isinstance(raw_messages, str):
+            try:
+                raw_messages = json.loads(raw_messages)
+            except json.JSONDecodeError:
+                raw_messages = None
+
         # Schema 1: Standard 'messages' array
-        if "messages" in row and isinstance(row["messages"], list):
-            for m in row["messages"]:
+        if isinstance(raw_messages, list):
+            for m in raw_messages:
                 if isinstance(m, dict) and "role" in m and "content" in m:
                     role = str(m["role"]).lower()
                     if role in ("system", "user", "assistant", "tool") and str(m["content"]).strip():
@@ -163,6 +172,8 @@ class AutoFormatSanitizer(DataSanitizer):
 
 
 def _reward_present(value: Any) -> bool:
+    if hasattr(value, "tolist"):
+        value = value.tolist()
     if isinstance(value, list):
         return bool(value) and all(_reward_present(item) for item in value)
     try:
@@ -189,7 +200,7 @@ def _preference(row: dict[str, Any], idx: int) -> DatasetRecord | None:
     if not isinstance(prompt, str) or not prompt.strip() or not chosen or not rejected or chosen == rejected:
         return None
     if "chosen_reward" in row or "rejected_reward" in row:
-        if not all(_reward_present(row.get(k)) for k in ("chosen_reward", "rejected_reward")):
+        if not all(isinstance(row.get(k), (int, float, str)) and _reward_present(row.get(k)) for k in ("chosen_reward", "rejected_reward")):
             return None
         if float(row["chosen_reward"]) <= float(row["rejected_reward"]):
             return None

@@ -23,7 +23,9 @@ export default function TrainingPage() {
   const [customModel, setCustomModel] = useState(false);
   const [dataset, setDataset] = useState<UploadedDataset | null>(null);
   const [form, setForm] = useState<Overrides | null>(null);
-  const [busy, setBusy] = useState<"upload" | "start" | null>(null);
+  const [busy, setBusy] = useState<"upload" | "start" | "recommend" | null>(null);
+  const [intensity, setIntensity] = useState<"quick" | "balanced" | "thorough">("balanced");
+  const [presets, setPresets] = useState<UploadedDataset["presets"] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [ingestionProgress, setIngestionProgress] = useState<Record<string, number>>({});
@@ -44,8 +46,12 @@ export default function TrainingPage() {
       }
       setDataset(uploaded);
       setForm(overridesFrom(uploaded));
+      setPresets(uploaded.presets);
+      setIntensity("balanced");
+      setCustomModel(false);
     } catch (cause) {
       setDataset(null);
+      setForm(null);
       setError(describeError(cause));
     } finally {
       setBusy(null);
@@ -60,12 +66,37 @@ export default function TrainingPage() {
       const { job_id } = await apiPost<{ job_id: string }>("/api/training/start", {
         dataset_name: dataset.file_name,
         ...form,
+        intensity,
       });
       router.push(`/training/${job_id}`);
     } catch (cause) {
       setError(describeError(cause));
       setBusy(null);
     }
+  }
+
+  async function recommend(base_model: string, objective: Recipe["objective"]) {
+    if (!dataset) return;
+    setBusy("recommend");
+    setError(null);
+    try {
+      const result = await apiPost<{ recipe: Recipe; presets: UploadedDataset["presets"] }>("/api/recipe/recommend", { dataset_name: dataset.file_name, base_model, objective });
+      setPresets(result.presets);
+      setForm((current) => current ? { ...current, ...result.presets[intensity] } : current);
+    } catch (cause) { setError(describeError(cause)); }
+    finally { setBusy(null); }
+  }
+
+  function mark(key: keyof Recipe) {
+    return form && dataset && form[key] !== dataset.recipe[key] ? " · changed" : "";
+  }
+
+  function reset() {
+    if (!dataset) return;
+    setForm(overridesFrom(dataset));
+    setPresets(dataset.presets);
+    setIntensity("balanced");
+    setCustomModel(false);
   }
 
   function set<K extends keyof Overrides>(key: K, value: Overrides[K]) {
@@ -121,13 +152,13 @@ export default function TrainingPage() {
         <Panel index="B" title="Recipe" aside={dataset ? "auto-selected, editable" : "upload a dataset first"}>
           {form ? (
             <div className="panel__body">
+              <h3>Basic</h3>
               <label className="field">
-                <span className="field__label">Base model</span>
-                <select className="input" value={customModel ? "custom" : form.base_model} onChange={(e) => {
+                <span className="field__label">Base model{mark("base_model")}</span>
+                <select className="input" disabled={busy !== null} value={customModel ? "custom" : form.base_model} onChange={(e) => {
                   if (e.target.value === "custom") { setCustomModel(true); return; }
                   setCustomModel(false);
-                  const model = catalog.data?.find((entry) => entry.hf_id === e.target.value);
-                  setForm((current) => current && model ? { ...current, base_model: model.hf_id, quantization: model.quantization ?? current.quantization } : current);
+                  void recommend(e.target.value, form.objective);
                 }}>
                   {[{ label: "Small · up to 4B", min: 0, max: 4 }, { label: "Medium · 4B to 9B", min: 4, max: 9 }, { label: "Large · 9B to 15B", min: 9, max: 15 }].map((group) => (
                     <optgroup key={group.label} label={group.label}>
@@ -145,35 +176,55 @@ export default function TrainingPage() {
                 {catalog.data?.find((model) => model.hf_id === form.base_model)?.gated ? <small>Set HF_TOKEN in .env and accept this model’s license on Hugging Face.</small> : null}
                 <ErrorNotice message={catalog.error} title="Could not load model catalog" />
               </label>
+              {customModel ? <button className="btn" disabled={busy !== null} onClick={() => void recommend(form.base_model, form.objective)}>Recommend for custom model</button> : null}
               <div className="field-row">
                 <label className="field">
-                  <span className="field__label">Objective</span>
-                  <select className="input" value={form.objective} onChange={(e) => set("objective", e.target.value as Recipe["objective"])}>
+                  <span className="field__label">Objective{mark("objective")}</span>
+                  <select className="input" disabled={busy !== null} value={form.objective} onChange={(e) => void recommend(form.base_model, e.target.value as Recipe["objective"])}>
                     <option value="sft">SFT</option>
                     <option value="dpo">DPO</option>
                     <option value="grpo">GRPO</option>
                   </select>
                 </label>
                 <label className="field">
-                  <span className="field__label">Quantization</span>
+                  <span className="field__label">Training intensity{intensity !== "balanced" ? " · changed" : ""}</span>
+                  <select className="input" disabled={busy !== null || !presets} value={intensity} onChange={(e) => {
+                    const next = e.target.value as typeof intensity;
+                    setIntensity(next);
+                    if (presets) setForm((current) => current ? { ...current, epochs: presets[next].epochs, learning_rate: presets[next].learning_rate } : current);
+                  }}>
+                    <option value="quick">Quick</option>
+                    <option value="balanced">Balanced</option>
+                    <option value="thorough">Thorough</option>
+                  </select>
+                  <small>{form.epochs} epochs · learning rate {form.learning_rate}</small>
+                </label>
+              </div>
+              <details>
+                <summary>Advanced</summary>
+                <label className="field">
+                  <span className="field__label">Quantization{mark("quantization")}</span>
                   <select className="input" value={form.quantization} onChange={(e) => set("quantization", e.target.value as Recipe["quantization"])}>
                     <option value="qlora_4bit_nf4">QLoRA 4-bit</option>
                     <option value="lora_16bit">LoRA 16-bit</option>
                     <option value="none">None</option>
                   </select>
                 </label>
-              </div>
               <div className="field-row--3">
-                <NumberField label="LoRA r" value={form.lora_r} onChange={(v) => set("lora_r", v)} />
-                <NumberField label="LoRA alpha" value={form.lora_alpha} onChange={(v) => set("lora_alpha", v)} />
-                <NumberField label="Learning rate" value={form.learning_rate} step="0.00001" onChange={(v) => set("learning_rate", v)} />
-                <NumberField label="Epochs" value={form.epochs} onChange={(v) => set("epochs", v)} />
-                <NumberField label="Batch size" value={form.batch_size} onChange={(v) => set("batch_size", v)} />
+                <NumberField label={"LoRA r" + mark("lora_r")} value={form.lora_r} onChange={(v) => set("lora_r", v)} />
+                <NumberField label={"LoRA alpha" + mark("lora_alpha")} value={form.lora_alpha} onChange={(v) => set("lora_alpha", v)} />
+                <NumberField label={"Learning rate" + mark("learning_rate")} value={form.learning_rate} step="0.00001" onChange={(v) => set("learning_rate", v)} />
+                <NumberField label={"Epochs" + mark("epochs")} value={form.epochs} onChange={(v) => set("epochs", v)} />
+                <NumberField label={"Batch size" + mark("batch_size")} value={form.batch_size} onChange={(v) => set("batch_size", v)} />
+                <NumberField label={"Gradient accumulation" + mark("gradient_accumulation_steps")} value={form.gradient_accumulation_steps} onChange={(v) => set("gradient_accumulation_steps", v)} />
+                <NumberField label={"Max sequence length" + mark("max_seq_length")} value={form.max_seq_length} onChange={(v) => set("max_seq_length", v)} />
               </div>
               <label className="field">
-                <span className="field__label">Checkpoint directory</span>
+                <span className="field__label">Checkpoint directory{dataset && form.output_dir !== overridesFrom(dataset).output_dir ? " · changed" : ""}</span>
                 <input className="input input--mono" value={form.output_dir} onChange={(e) => set("output_dir", e.target.value)} />
               </label>
+              </details>
+              <button className="btn btn--block" disabled={busy !== null} onClick={reset}>Reset to recommended</button>
               <button className="btn btn--block" disabled={busy !== null} onClick={() => void start()}>
                 {busy === "start" ? "Starting…" : "Start training"}
               </button>

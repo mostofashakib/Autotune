@@ -40,6 +40,9 @@ class TrlPeftBackend(TrainingBackend):
                 "Training dependencies missing. Install via `pip install 'autotune[training]'`."
             ) from exc
 
+        if not torch.cuda.is_available():
+            raise RuntimeError("Training requires a CUDA GPU. Run on a supported GPU host or rent a cloud GPU.")
+
         out_dir = Path(job.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         recipe = job.recipe
@@ -94,6 +97,9 @@ class TrlPeftBackend(TrainingBackend):
         # 4. Prepare Hugging Face dataset format
         train_data = training_rows(dataset.train_records, recipe.objective)
         val_data = training_rows(dataset.val_records, recipe.objective)
+        if recipe.objective == TrainingObjective.DPO:
+            train_data = conversational_dpo_rows(train_data)
+            val_data = conversational_dpo_rows(val_data)
 
         from datasets import Dataset as HfDataset
         hf_train = HfDataset.from_list(train_data)
@@ -109,6 +115,7 @@ class TrlPeftBackend(TrainingBackend):
                 per_device_train_batch_size=recipe.batch_size,
                 gradient_accumulation_steps=recipe.gradient_accumulation_steps,
                 num_train_epochs=recipe.epochs, max_length=recipe.max_seq_length,
+                gradient_checkpointing=True,
                 report_to="none",
             )
             trainer = DPOTrainer(model=model, args=training_args, train_dataset=hf_train,
@@ -120,6 +127,10 @@ class TrlPeftBackend(TrainingBackend):
                     output_dir=str(out_dir),
                     learning_rate=recipe.learning_rate,
                     num_generations=recipe.grpo_group_size,
+                    per_device_train_batch_size=recipe.batch_size,
+                    gradient_accumulation_steps=recipe.gradient_accumulation_steps,
+                    num_train_epochs=recipe.epochs,
+                    gradient_checkpointing=True,
                     max_completion_length=min(512, recipe.max_seq_length),
                     report_to="none",
                 )
@@ -129,24 +140,8 @@ class TrlPeftBackend(TrainingBackend):
                     train_dataset=hf_train,
                 )
             except Exception as exc:
-                logger.info("Defaulting to SFT-RL adapter loop: %s", exc)
-                training_args = SFTConfig(
-                    output_dir=str(out_dir),
-                    learning_rate=recipe.learning_rate,
-                    per_device_train_batch_size=recipe.batch_size,
-                    gradient_accumulation_steps=recipe.gradient_accumulation_steps,
-                    num_train_epochs=recipe.epochs,
-                    max_seq_length=recipe.max_seq_length,
-                    report_to="none",
-                )
-                trainer = SFTTrainer(
-                    model=model,
-                    train_dataset=hf_train,
-                    eval_dataset=hf_val,
-                    peft_config=lora_config,
-                    tokenizer=tokenizer,
-                    args=training_args,
-                )
+                raise RuntimeError(f"GRPO initialization failed. Check the reward configuration and training dependencies: {exc}") from exc
+
         else:
             training_args = SFTConfig(
                 output_dir=str(out_dir),
@@ -154,11 +149,12 @@ class TrlPeftBackend(TrainingBackend):
                 per_device_train_batch_size=recipe.batch_size,
                 gradient_accumulation_steps=recipe.gradient_accumulation_steps,
                 num_train_epochs=recipe.epochs,
-                max_seq_length=recipe.max_seq_length,
+                max_length=recipe.max_seq_length,
                 warmup_ratio=recipe.warmup_ratio,
+                gradient_checkpointing=True,
                 logging_steps=10,
                 save_strategy="epoch",
-                evaluation_strategy="epoch" if hf_val else "no",
+                eval_strategy="epoch" if hf_val else "no",
                 fp16=not torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False,
                 bf16=torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False,
                 report_to="none",
@@ -167,8 +163,7 @@ class TrlPeftBackend(TrainingBackend):
                 model=model,
                 train_dataset=hf_train,
                 eval_dataset=hf_val,
-                peft_config=lora_config,
-                tokenizer=tokenizer,
+                processing_class=tokenizer,
                 args=training_args,
             )
 
@@ -241,3 +236,10 @@ def training_rows(records: list[DatasetRecord], objective: TrainingObjective) ->
             raise ValueError("DPO requires a prompt and distinct chosen/rejected responses in every row. Upload only preference rows or select SFT.")
         rows.append({"prompt": record.prompt, "chosen": chosen, "rejected": rejected})
     return rows
+
+
+def conversational_dpo_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Let TRL apply the selected instruct model's chat template to both alternatives."""
+    return [{"prompt": [{"role": "user", "content": row["prompt"]}],
+             "chosen": [{"role": "assistant", "content": row["chosen"]}],
+             "rejected": [{"role": "assistant", "content": row["rejected"]}]} for row in rows]

@@ -16,6 +16,8 @@ export type Recipe = {
   learning_rate: number;
   batch_size: number;
   epochs: number;
+  gradient_accumulation_steps: number;
+  max_seq_length: number;
 };
 
 export type UploadedDataset = {
@@ -27,6 +29,7 @@ export type UploadedDataset = {
   val_records: number;
   dropped_count: number;
   recipe: Recipe;
+  presets: Record<"quick" | "balanced" | "thorough", Recipe>;
   warnings?: string[];
   preview: { prompt: string; completion: string }[];
 };

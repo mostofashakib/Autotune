@@ -68,3 +68,20 @@ def test_detects_tool_use_task_type(tmp_path: Path):
     dataset = sanitizer.sanitize(file_path)
 
     assert dataset.task_type == TaskType.TOOL_USE
+
+
+@pytest.mark.parametrize('extension', ['csv', 'parquet'])
+@pytest.mark.parametrize('kind', [TaskType.CHAT, TaskType.TOOL_USE, TaskType.RL_GRPO])
+def test_nested_messages_in_tabular_data(tmp_path, extension, kind):
+    import pandas as pd
+    messages = [{'role':'user', 'content':'question'}, {'role':'assistant', 'content':'answer'}]
+    if kind == TaskType.TOOL_USE:
+        messages.insert(1, {'role':'tool', 'content':'result'})
+    row = {'messages':json.dumps(messages) if extension == 'csv' else messages}
+    if kind == TaskType.RL_GRPO:
+        row['reward'] = 1
+    frame = pd.DataFrame([row])
+    path = tmp_path / ('data.' + extension)
+    if extension == 'csv': frame.to_csv(path, index=False)
+    else: frame.to_parquet(path, index=False)
+    assert AutoFormatSanitizer().sanitize(path).task_type == kind

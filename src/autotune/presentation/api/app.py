@@ -14,7 +14,7 @@ from typing import Any, Literal, Optional
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from autotune.core.domain.models import (
     CleanedDataset,
@@ -24,12 +24,14 @@ from autotune.core.domain.models import (
     RunPodConfig,
     TaskType,
     TrainingJob,
+    Recipe,
     TrainingObjective,
     TrainingProgress,
 )
+from autotune.core.domain.training_settings import TrainingIntensity, intensity_recipes, validate_training_recipe
 from autotune.core.domain.model_catalog import catalog_for_vram
 from autotune.core.services.recipe_selector import AutoRecipeSelector
-from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
+from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend, training_rows
 from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.core.ports.evaluator import BenchmarkRunner
@@ -46,6 +48,8 @@ from autotune.infrastructure.storage.job_store import JobStore
 from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.settings import (
     CREDENTIALS,
+    HF_TOKEN,
+    require_credential,
     ENV_FILE,
     CredentialNotConfigured,
     credential_value,
@@ -64,14 +68,22 @@ _BENCHMARK_FAILURES = (ModelCallError, JudgeError, HarborError, MalformedExportE
 class TrainingStartRequest(BaseModel):
     dataset_name: str
     base_model: Optional[str] = None
-    objective: Optional[str] = None
-    quantization: Optional[str] = None
-    lora_r: Optional[int] = 16
-    lora_alpha: Optional[int] = 32
-    learning_rate: Optional[float] = 2e-4
-    epochs: Optional[int] = 3
-    batch_size: Optional[int] = 2
+    objective: TrainingObjective | None = None
+    quantization: QuantizationMethod | None = None
+    intensity: TrainingIntensity = "balanced"
+    lora_r: int | None = Field(default=None, ge=1, le=512)
+    lora_alpha: int | None = Field(default=None, ge=1, le=1024)
+    learning_rate: float | None = Field(default=None, gt=0, le=.1, allow_inf_nan=False)
+    epochs: int | None = Field(default=None, ge=1, le=100)
+    batch_size: int | None = Field(default=None, ge=1, le=1024)
+    gradient_accumulation_steps: int | None = Field(default=None, ge=1, le=4096)
+    max_seq_length: int | None = Field(default=None, ge=128, le=131072)
     output_dir: str = "./checkpoints/ui-model"
+
+    @field_validator("objective", mode="before")
+    @classmethod
+    def normalize_objective(cls, value: Any) -> Any:
+        return value.lower() if isinstance(value, str) else value
 
 
 def _runpod_call(call: Callable[[], Any]) -> Any:
@@ -254,7 +266,7 @@ def create_app() -> FastAPI:
         return {
             "vram_gb": round(vram, 2),
             "cuda_available": has_cuda,
-            "device": "CUDA / Metal" if has_cuda else "CPU",
+            "device": "CUDA" if has_cuda else "CPU / no CUDA",
             "recommended_quantization": "qlora_4bit_nf4" if vram <= 32 else "lora_16bit",
         }
 
@@ -272,6 +284,7 @@ def create_app() -> FastAPI:
                 "train_records": len(cleaned.train_records), "val_records": len(cleaned.val_records),
                 "dropped_count": cleaned.dropped_count, "warnings": cleaned.warnings,
                 "recipe": recipe.model_dump(mode="json"), "progress": state["progress"],
+                "presets": {name: r.model_dump(mode="json") for name, r in intensity_recipes(recipe).items()},
                 "preview": [{
                     "prompt": r.prompt or (r.messages[0].content if r.messages else ""),
                     "completion": r.completions[0] if r.completions else (r.messages[-1].content if len(r.messages) > 1 else ""),
@@ -322,6 +335,18 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="Dataset job not found")
         return state
 
+    @app.post("/api/recipe/recommend")
+    async def recommend_recipe(req: TrainingStartRequest) -> dict[str, Any]:
+        try:
+            dataset = load_dataset(_resolve_dataset(req.dataset_name))
+            model = resolve_model(req.base_model) if req.base_model else None
+            recipe = AutoRecipeSelector().select_recipe(dataset, forced_model=req.base_model,
+                                                        forced_objective=req.objective, model_spec=model)
+            return {"recipe": recipe.model_dump(mode="json"),
+                    "presets": {name: r.model_dump(mode="json") for name, r in intensity_recipes(recipe).items()}}
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.post("/api/training/start", status_code=202)
     async def start_training(req: TrainingStartRequest) -> dict[str, Any]:
         dataset_path = _resolve_dataset(req.dataset_name)
@@ -329,18 +354,26 @@ def create_app() -> FastAPI:
             cleaned = load_dataset(dataset_path)
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"could not parse dataset: {exc}") from exc
-        recipe = AutoRecipeSelector().select_recipe(
-            cleaned,
-            forced_model=req.base_model,
-            model_spec=resolve_model(req.base_model) if req.base_model else None,
-            forced_quantization=QuantizationMethod(req.quantization) if req.quantization else None,
-            forced_objective=TrainingObjective(req.objective.lower()) if req.objective else None,
-        ).model_copy(update={
-            key: value for key, value in {
-                "lora_r": req.lora_r, "lora_alpha": req.lora_alpha, "learning_rate": req.learning_rate,
-                "epochs": req.epochs, "batch_size": req.batch_size,
-            }.items() if value is not None
-        })
+        try:
+            selector = AutoRecipeSelector()
+            vram = selector.detect_available_vram_gb()
+            model = resolve_model(req.base_model) if req.base_model else None
+            recommended = selector.select_recipe(cleaned, forced_model=req.base_model,
+                                                  forced_quantization=req.quantization,
+                                                  forced_objective=req.objective,
+                                                  available_vram_gb=vram, model_spec=model, validate_memory=False)
+            selected = intensity_recipes(recommended)[req.intensity]
+            overrides = {key: value for key, value in req.model_dump().items()
+                         if key in ("lora_r", "lora_alpha", "learning_rate", "epochs", "batch_size",
+                                    "gradient_accumulation_steps", "max_seq_length") and value is not None}
+            recipe = Recipe.model_validate({**selected.model_dump(), **overrides})
+            model = model or resolve_model(recipe.base_model)
+            validate_training_recipe(recipe, model, vram)
+            training_rows(cleaned.train_records + cleaned.val_records, recipe.objective)
+            if model.gated:
+                require_credential(HF_TOKEN)
+        except (ValueError, CredentialNotConfigured) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         job = TrainingJob(id=job_id, dataset_path=str(dataset_path), output_dir=req.output_dir, recipe=recipe, status=JobStatus.RUNNING)
         backend = build_training_backend()
@@ -354,6 +387,7 @@ def create_app() -> FastAPI:
                 f"Objective: {recipe.objective.value.upper()} | Quantization: {recipe.quantization.value}",
             ],
             "checkpoint_dir": None, "error": None, "backend": backend,
+            "recipe": recipe.model_dump(mode="json"), "intensity": req.intensity,
         }
         jobs[job_id] = state
         save_training(state)

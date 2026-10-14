@@ -4,17 +4,14 @@ from __future__ import annotations
 import logging
 import math
 from autotune.core.domain.model_catalog import MODELS, ModelSpec, fitting_quantization, get_model, memory_baseline
+from autotune.core.domain.training_settings import estimate_memory_gb, validate_training_recipe
 from autotune.core.domain.models import CleanedDataset, QuantizationMethod, Recipe, TaskType, TrainingObjective
 
 logger = logging.getLogger(__name__)
 
 
 class AutoRecipeSelector:
-    """Infers optimal base model, LoRA/QLoRA quantization, and hyperparameters.
-
-    Ensures users with limited experience do not suffer CUDA Out-Of-Memory errors
-    or catastrophic forgetting.
-    """
+    """Select a model and data-driven hyperparameters within an estimated memory budget."""
 
     @staticmethod
     def detect_available_vram_gb() -> float:
@@ -23,12 +20,8 @@ class AutoRecipeSelector:
             import torch
             if torch.cuda.is_available():
                 device = torch.cuda.current_device()
-                total_bytes = torch.cuda.get_device_properties(device).total_memory
-                return total_bytes / (1024 ** 3)
-            # Check Apple Silicon MPS
-            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                # Apple unified memory typically shared
-                return 16.0
+                free_bytes, _ = torch.cuda.mem_get_info(device)
+                return free_bytes / (1024 ** 3)
         except Exception as exc:
             logger.debug("Could not inspect GPU VRAM: %s", exc)
 
@@ -42,6 +35,7 @@ class AutoRecipeSelector:
         forced_objective: TrainingObjective | None = None,
         available_vram_gb: float | None = None,
         model_spec: ModelSpec | None = None,
+        validate_memory: bool = True,
     ) -> Recipe:
         """Derive an optimal training recipe based on dataset characteristics and hardware."""
         vram = available_vram_gb if available_vram_gb is not None else self.detect_available_vram_gb()
@@ -107,7 +101,7 @@ class AutoRecipeSelector:
         if objective == TrainingObjective.GRPO:
             learning_rate = min(learning_rate, 2e-5)
 
-        return Recipe(
+        recipe = Recipe(
             base_model=base_model,
             objective=objective,
             quantization=quantization,
@@ -123,3 +117,21 @@ class AutoRecipeSelector:
             grpo_group_size=4,
             grpo_epsilon=0.2,
         )
+
+        if vram:
+            original_batch = recipe.batch_size
+            while recipe.batch_size > 1 and estimate_memory_gb(recipe, model) > vram:
+                recipe = recipe.model_copy(update={"batch_size": recipe.batch_size - 1})
+            recipe = recipe.model_copy(update={"gradient_accumulation_steps": math.ceil(grad_accum * original_batch / recipe.batch_size)})
+            if not forced_quantization and estimate_memory_gb(recipe, model) > vram:
+                recipe = recipe.model_copy(update={"quantization": QuantizationMethod.QLORA_4BIT_NF4})
+            if not forced_model and estimate_memory_gb(recipe, model) > vram:
+                smaller = [m for m in candidates if m.parameter_count < model.parameter_count]
+                for candidate in sorted(smaller, key=lambda m: m.parameter_count, reverse=True):
+                    trial = recipe.model_copy(update={"base_model": candidate.hf_id, "quantization": forced_quantization or fitting_quantization(candidate, vram)})
+                    if estimate_memory_gb(trial, candidate) <= vram:
+                        recipe, model = trial, candidate
+                        break
+            if validate_memory:
+                validate_training_recipe(recipe, model, vram)
+        return recipe
