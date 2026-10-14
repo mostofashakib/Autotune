@@ -1,8 +1,8 @@
 # Autotune
 
-**LLM Post Training & Benchmarking Engine — Plug in your data, get a frontier model out**
+**Automated LLM Post-Training & Benchmarking — Turn raw domain documents and datasets into fine-tuned models without deep learning infrastructure expertise.**
 
-Autotune handles the entire post-training workflow for large language models. Feed it raw documents (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.zip`) or structured datasets (`.csv`, `.tsv`, `.json`, `.jsonl`, `.parquet`). Autotune extracts clean text, generates grounded pairs, detects conversational or preference formats, selects the right base model and tuning recipe for your GPU, runs training (SFT, DPO, or GRPO), and verifies quality against baseline models with automated benchmarks.
+Autotune gives developers, researchers, and domain specialists a complete post-training pipeline without requiring machine learning engineering experience. Upload your own documents (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.zip`) or structured data (`.csv`, `.tsv`, `.json`, `.jsonl`, `.parquet`). Autotune does the heavy lifting: extracting and chunking text, generating grounded training pairs, fitting model weights to your GPU's VRAM to prevent CUDA Out-Of-Memory errors, choosing optimal tuning recipes (SFT, DPO, or GRPO), running training, and benchmarking quality against the base model with pass@k evaluations.
 
 Works directly with [Forge](https://github.com/mostofashakib/Forge) for execution-verified synthetic datasets.
 
