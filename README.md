@@ -206,3 +206,12 @@ Training extras require TRL 0.18 or newer and Transformers 4.49 or newer. SFT an
 ## Integration with Forge
 
 Need execution-verified training data? Use [Forge](https://github.com/mostofashakib/Forge) to synthesize sandboxed tasks, simulated personas, and multi-turn agent trajectories. Autotune natively ingests Forge export bundles (`sft_pairs.jsonl`, `preference_pairs.jsonl`, `grpo_rollouts.parquet`). The two never import or call each other. Forge data reaches Autotune as exported files or Harbor task directories.
+
+---
+
+## License
+
+MIT. See [LICENSE](https://github.com/mostofashakib/VidQ/blob/main/LICENSE).
+
+Built by [Mostofa Shakib](https://www.mostofashakib.com/).
+
