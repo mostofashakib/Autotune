@@ -6,7 +6,7 @@ import { useState } from "react";
 import { ErrorNotice, PageHero, Panel, StatusBadge } from "@/components/ui";
 import { apiGet, apiPost, apiUpload, describeError } from "@/lib/api";
 import { formatWhen } from "@/lib/format";
-import type { Recipe, TrainingSummary, UploadedDataset } from "@/lib/types";
+import type { CatalogModel, Recipe, TrainingSummary, UploadedDataset } from "@/lib/types";
 import { usePolling } from "@/lib/usePolling";
 
 type Overrides = Recipe & { output_dir: string };
@@ -19,6 +19,8 @@ function overridesFrom(dataset: UploadedDataset): Overrides {
 export default function TrainingPage() {
   const router = useRouter();
   const runs = usePolling<TrainingSummary[]>("/api/training", 5000, () => true);
+  const catalog = usePolling<CatalogModel[]>("/api/models", 30000, () => true);
+  const [customModel, setCustomModel] = useState(false);
   const [dataset, setDataset] = useState<UploadedDataset | null>(null);
   const [form, setForm] = useState<Overrides | null>(null);
   const [busy, setBusy] = useState<"upload" | "start" | null>(null);
@@ -121,7 +123,27 @@ export default function TrainingPage() {
             <div className="panel__body">
               <label className="field">
                 <span className="field__label">Base model</span>
-                <input className="input input--mono" value={form.base_model} onChange={(e) => set("base_model", e.target.value)} />
+                <select className="input" value={customModel ? "custom" : form.base_model} onChange={(e) => {
+                  if (e.target.value === "custom") { setCustomModel(true); return; }
+                  setCustomModel(false);
+                  const model = catalog.data?.find((entry) => entry.hf_id === e.target.value);
+                  setForm((current) => current && model ? { ...current, base_model: model.hf_id, quantization: model.quantization ?? current.quantization } : current);
+                }}>
+                  {[{ label: "Small · up to 4B", min: 0, max: 4 }, { label: "Medium · 4B to 9B", min: 4, max: 9 }, { label: "Large · 9B to 15B", min: 9, max: 15 }].map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {catalog.data?.filter((model) => model.parameters_b > group.min && model.parameters_b <= group.max).map((model) => (
+                        <option key={model.hf_id} value={model.hf_id} disabled={!model.fits}>
+                          {model.display_name}{model.gated ? " · HF_TOKEN required" : ""}{model.fits ? "" : ` · ${model.reason}`}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                  <option value="custom">Custom Hugging Face model</option>
+                </select>
+                {customModel ? <input aria-label="Custom Hugging Face model ID" className="input input--mono" value={form.base_model} onChange={(e) => set("base_model", e.target.value)} /> : null}
+                <small>{catalog.data?.find((model) => model.hf_id === form.base_model)?.license}</small>
+                {catalog.data?.find((model) => model.hf_id === form.base_model)?.gated ? <small>Set HF_TOKEN in .env and accept this model’s license on Hugging Face.</small> : null}
+                <ErrorNotice message={catalog.error} title="Could not load model catalog" />
               </label>
               <div className="field-row">
                 <label className="field">

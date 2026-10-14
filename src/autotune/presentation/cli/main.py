@@ -10,6 +10,7 @@ from rich.table import Table
 from autotune.core.domain.models import (
     ComparisonReport, JobStatus, ModelEndpoint, QuantizationMethod, RunPodConfig, TrainingJob, TrainingObjective,
 )
+from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.core.services.recipe_selector import AutoRecipeSelector
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
@@ -119,6 +120,7 @@ def train(
     recipe = selector.select_recipe(
         dataset,
         forced_model=base_model,
+        model_spec=resolve_model(base_model) if base_model else None,
         forced_quantization=quant_enum,
         forced_objective=obj_enum,
     )

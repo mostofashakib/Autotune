@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+import math
+from autotune.core.domain.model_catalog import MODELS, ModelSpec, fitting_quantization, get_model, memory_baseline
 from autotune.core.domain.models import CleanedDataset, QuantizationMethod, Recipe, TaskType, TrainingObjective
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class AutoRecipeSelector:
         forced_quantization: QuantizationMethod | None = None,
         forced_objective: TrainingObjective | None = None,
         available_vram_gb: float | None = None,
+        model_spec: ModelSpec | None = None,
     ) -> Recipe:
         """Derive an optimal training recipe based on dataset characteristics and hardware."""
         vram = available_vram_gb if available_vram_gb is not None else self.detect_available_vram_gb()
@@ -55,26 +57,26 @@ class AutoRecipeSelector:
         else:
             objective = TrainingObjective.SFT
 
-        # 2. Base model selection
+        if not math.isfinite(vram) or vram < 0:
+            raise ValueError("VRAM must be a finite nonnegative number")
         if forced_model:
-            base_model = forced_model
-        elif dataset.task_type in (TaskType.TOOL_USE, TaskType.PREFERENCE, TaskType.RL_GRPO):
-            base_model = "Qwen/Qwen2.5-7B-Instruct"
+            model = get_model(forced_model) or model_spec
+            if model is None or model.hf_id != forced_model:
+                raise ValueError(f"Unknown parameter count for {forced_model}. Resolve its Hugging Face metadata before selecting a recipe.")
         else:
-            base_model = "meta-llama/Llama-3.1-8B-Instruct"
-
-        # 3. Quantization decision: LoRA (16-bit) vs QLoRA (4-bit NF4)
-        if forced_quantization is not None:
-            quantization = forced_quantization
-        elif vram <= 0.0:
-            # CPU environment (testing / local dev)
-            quantization = QuantizationMethod.NONE
-        elif vram <= 32.0:
-            # Consumer GPU (16GB - 24GB): QLoRA is required to prevent OOM on 7B/8B models
-            quantization = QuantizationMethod.QLORA_4BIT_NF4
-        else:
-            # Datacenter GPU (40GB - 80GB): Use full 16-bit LoRA for maximum throughput
-            quantization = QuantizationMethod.LORA_16BIT
+            candidates = [m for m in MODELS if not m.gated and
+                          (dataset.task_type != TaskType.TOOL_USE or m.supports_tool_calling) and
+                          (vram == 0 or fitting_quantization(m, vram) is not None)]
+            if not candidates:
+                raise ValueError("No catalog model fits this GPU. Use a GPU with at least 5GB VRAM for QLoRA.")
+            # No GPU still permits inspection. Training's GPU check refuses execution.
+            model = max(candidates, key=lambda m: m.parameter_count) if vram else get_model("Qwen/Qwen2.5-1.5B-Instruct")
+        base_model = model.hf_id
+        quantization = forced_quantization or (fitting_quantization(model, vram) if vram else QuantizationMethod.NONE)
+        if quantization is None:
+            raise ValueError(f"{base_model} needs ~{model.qlora_min_vram_gb:g}GB VRAM with QLoRA. Choose a smaller model or larger GPU.")
+        if vram and memory_baseline(model.parameters_b, quantization) > vram:
+            raise ValueError(f"{base_model} does not fit {vram:g}GB VRAM at {quantization.value}. Select QLoRA or a smaller model.")
 
         # 3. Hyperparameters based on dataset volume
         if total_samples < 500:

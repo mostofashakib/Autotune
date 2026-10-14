@@ -114,3 +114,18 @@ export type Pod = {
 };
 
 export type CredentialStatus = { name: string; purpose: string; configured: boolean; env_file: string };
+
+export type CatalogModel = {
+  hf_id: string;
+  display_name: string;
+  parameters_b: number;
+  license: string;
+  gated: boolean;
+  supports_tool_calling: boolean;
+  context_length: number;
+  qlora_min_vram_gb: number;
+  lora_min_vram_gb: number;
+  fits: boolean;
+  quantization: Recipe["quantization"] | null;
+  reason: string | null;
+};

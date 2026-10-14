@@ -12,8 +12,8 @@ Works directly with [Forge](https://github.com/mostofashakib/Forge) for executio
 
 - **Automatic Ingestion:** Drop in raw CSV, JSONL, or Parquet files without converting schemas. Autotune identifies conversation turns, prompt and response pairs, or tool calls automatically.
 - **Hardware-Aware LoRA and QLoRA:**
-  - **QLoRA (4-bit NF4):** Uses bitsandbytes 4-bit NormalFloat to tune 7B to 14B models on 16GB to 24GB GPUs without memory errors.
-  - **LoRA (16-bit):** Selected on GPUs with 40GB or more VRAM for faster training.
+  - **QLoRA (4-bit NF4):** Uses bitsandbytes 4-bit NormalFloat. The catalog spans 0.5B to 14.7B parameters, with estimated QLoRA minima of 5GB to 19GB. Larger batches and sequences need more memory.
+  - **LoRA (16-bit):** Selected when the chosen model fits at 16-bit precision. Small models fit on smaller GPUs, while 14B models need more than 24GB.
 - **Reinforcement Learning with GRPO:** Train reasoning models with Group Relative Policy Optimization, customizable rollouts, and group rewards.
 - **vLLM Serving:** Serve models with an OpenAI-compatible endpoint in one command.
 - **Cloud GPUs on RunPod:** Rent on-demand RTX 4090, A100, and H100 GPUs directly from your terminal.
@@ -166,3 +166,11 @@ The UI displays documents read, chunks made, pairs generated, and pairs kept. `P
 ### Raw preference data
 
 CSV, TSV, JSON, JSONL, and Parquet accept `prompt`, `chosen`, and `rejected`. Responses are strings or message lists containing assistant text. Both alternatives survive normalization and feed the DPO trainer. If reward scores are supplied, both must be finite and `chosen_reward` must exceed `rejected_reward`. Empty or identical alternatives are rejected. Task precedence is reward labels, preference pairs, tool messages, then chat, independent of row order. Mixed files select the highest-priority objective, but DPO training requires preference fields on every row and fails clearly otherwise.
+
+### Model catalog
+
+`GET /api/models?vram=24` returns all 11 entries with parameter counts, licenses, gating, tool support, context limits, estimated VRAM, `fits`, and recommended quantization. Omitting `vram` uses detected hardware. The UI groups models by size and disables entries that exceed the estimate. Default selection chooses the largest fitting ungated model, restricting tool datasets to tool-capable entries. With no detected GPU, inspection still works and training reports its hardware requirement.
+
+IDs were checked on the Hugging Face Hub on 2026-10-14: [Qwen 0.5B](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct), [Qwen 1.5B](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct), [Qwen 3B](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct), [Qwen 7B](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct), [Qwen 14B](https://huggingface.co/Qwen/Qwen2.5-14B-Instruct), [Llama 1B](https://huggingface.co/meta-llama/Llama-3.2-1B-Instruct), [Llama 3B](https://huggingface.co/meta-llama/Llama-3.2-3B-Instruct), [Llama 8B](https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct), [Gemma 9B](https://huggingface.co/google/gemma-2-9b-it), [Mistral 7B](https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3), and [Phi 4 Mini](https://huggingface.co/microsoft/Phi-4-mini-instruct). Context limits use the standard model configuration, without optional context extension. Licenses differ, and several models are open-weight rather than OSI open source.
+
+Estimates in `core/domain/model_catalog.py` follow the memory components in [Hugging Face's memory guide](https://huggingface.co/docs/transformers/model_memory_anatomy). They are engineering budgets, not measured guarantees: frozen weights and scales, adapter state, checkpointed activations, and 4 GiB workspace. Baselines assume batch 1, 2048 tokens, and rank 16. A 14.7B model needs an estimated 19GB for QLoRA or 38GB for 16-bit LoRA. Gated entries need `HF_TOKEN` and license acceptance. The custom-model option resolves parameter count and context from Hub metadata without downloading weights and fails if reliable size metadata is unavailable.

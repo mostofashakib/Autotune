@@ -11,7 +11,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any, Literal, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -27,8 +27,10 @@ from autotune.core.domain.models import (
     TrainingObjective,
     TrainingProgress,
 )
+from autotune.core.domain.model_catalog import catalog_for_vram
 from autotune.core.services.recipe_selector import AutoRecipeSelector
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
+from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.core.ports.evaluator import BenchmarkRunner
 from autotune.core.ports.trainer import TrainingBackend
@@ -240,6 +242,10 @@ def create_app() -> FastAPI:
             for credential in CREDENTIALS
         ]
 
+    @app.get("/api/models")
+    async def models(vram: float | None = Query(default=None, ge=0, allow_inf_nan=False)) -> list[dict]:
+        return catalog_for_vram(AutoRecipeSelector.detect_available_vram_gb() if vram is None else vram)
+
     @app.get("/api/system/status")
     async def get_system_status() -> dict[str, Any]:
         selector = AutoRecipeSelector()
@@ -326,6 +332,7 @@ def create_app() -> FastAPI:
         recipe = AutoRecipeSelector().select_recipe(
             cleaned,
             forced_model=req.base_model,
+            model_spec=resolve_model(req.base_model) if req.base_model else None,
             forced_quantization=QuantizationMethod(req.quantization) if req.quantization else None,
             forced_objective=TrainingObjective(req.objective.lower()) if req.objective else None,
         ).model_copy(update={
