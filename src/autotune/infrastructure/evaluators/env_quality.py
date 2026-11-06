@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+
+from autotune.core.domain.models import EnvQualityMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +18,6 @@ class StateSchemaCoverageProvider(Protocol):
 
     def coverage_score(self, state: dict[str, Any]) -> float:
         ...
-
-
-@dataclass
-class EnvQualityMetrics:
-    env_name: str
-    state_coverage_score: float
-    reward_density: float
-    dead_end_rate: float
-    action_diversity: float
-    num_episodes: int
-    num_steps: int
 
 
 def compute_env_quality(

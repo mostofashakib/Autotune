@@ -827,6 +827,26 @@
         "title": "PodStopped",
         "type": "object"
       },
+      "Presets": {
+        "properties": {
+          "balanced": {
+            "$ref": "#/components/schemas/Recipe"
+          },
+          "quick": {
+            "$ref": "#/components/schemas/Recipe"
+          },
+          "thorough": {
+            "$ref": "#/components/schemas/Recipe"
+          }
+        },
+        "required": [
+          "quick",
+          "balanced",
+          "thorough"
+        ],
+        "title": "Presets",
+        "type": "object"
+      },
       "PreviewRow": {
         "properties": {
           "completion": {
@@ -971,18 +991,7 @@
       "RecipePresets": {
         "properties": {
           "presets": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/Recipe"
-            },
-            "propertyNames": {
-              "enum": [
-                "quick",
-                "balanced",
-                "thorough"
-              ]
-            },
-            "title": "Presets",
-            "type": "object"
+            "$ref": "#/components/schemas/Presets"
           },
           "recipe": {
             "$ref": "#/components/schemas/Recipe"
@@ -1687,18 +1696,7 @@
             "type": "string"
           },
           "presets": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/Recipe"
-            },
-            "propertyNames": {
-              "enum": [
-                "quick",
-                "balanced",
-                "thorough"
-              ]
-            },
-            "title": "Presets",
-            "type": "object"
+            "$ref": "#/components/schemas/Presets"
           },
           "preview": {
             "items": {

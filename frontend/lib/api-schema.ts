@@ -669,6 +669,12 @@ export interface components {
              */
             status: "TERMINATED";
         };
+        /** Presets */
+        Presets: {
+            balanced: components["schemas"]["Recipe"];
+            quick: components["schemas"]["Recipe"];
+            thorough: components["schemas"]["Recipe"];
+        };
         /** PreviewRow */
         PreviewRow: {
             /** Completion */
@@ -768,10 +774,7 @@ export interface components {
         };
         /** RecipePresets */
         RecipePresets: {
-            /** Presets */
-            presets: {
-                [key: string]: components["schemas"]["Recipe"];
-            };
+            presets: components["schemas"]["Presets"];
             recipe: components["schemas"]["Recipe"];
         };
         /** RunPodLaunchRequest */
@@ -992,10 +995,7 @@ export interface components {
             file_name: string;
             /** File Path */
             file_path: string;
-            /** Presets */
-            presets: {
-                [key: string]: components["schemas"]["Recipe"];
-            };
+            presets: components["schemas"]["Presets"];
             /** Preview */
             preview: components["schemas"]["PreviewRow"][];
             /** Progress */

@@ -43,9 +43,15 @@ class CatalogModel(BaseModel):
     lora_min_vram_gb: float
 
 
+class Presets(BaseModel):
+    quick: Recipe
+    balanced: Recipe
+    thorough: Recipe
+
+
 class RecipePresets(BaseModel):
     recipe: Recipe
-    presets: dict[TrainingIntensity, Recipe]
+    presets: Presets
 
 
 class PreviewRow(BaseModel):
@@ -64,7 +70,7 @@ class UploadedDataset(BaseModel):
     warnings: list[str]
     recipe: Recipe
     progress: dict[str, int]
-    presets: dict[TrainingIntensity, Recipe]
+    presets: Presets
     preview: list[PreviewRow]
 
 

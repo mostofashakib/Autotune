@@ -8,8 +8,8 @@ from autotune.infrastructure.evaluators.env_quality import EnvQualityMetrics
 
 def _metrics() -> list[EnvQualityMetrics]:
     return [
-        EnvQualityMetrics("email_env", state_coverage_score=0.9, reward_density=0.7, dead_end_rate=0.1, action_diversity=0.6, num_episodes=10, num_steps=100),
-        EnvQualityMetrics("pm_env", state_coverage_score=0.8, reward_density=0.6, dead_end_rate=0.2, action_diversity=0.5, num_episodes=10, num_steps=90),
+        EnvQualityMetrics(env_name="email_env", state_coverage_score=0.9, reward_density=0.7, dead_end_rate=0.1, action_diversity=0.6, num_episodes=10, num_steps=100),
+        EnvQualityMetrics(env_name="pm_env", state_coverage_score=0.8, reward_density=0.6, dead_end_rate=0.2, action_diversity=0.5, num_episodes=10, num_steps=90),
     ]
 
 

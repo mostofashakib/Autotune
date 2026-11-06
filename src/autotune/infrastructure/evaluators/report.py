@@ -4,10 +4,10 @@ from __future__ import annotations
 import csv
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
-from autotune.infrastructure.evaluators.env_quality import EnvQualityMetrics
+from autotune.core.domain.models import EnvQualityMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ class BenchmarkReport:
         out = self._cfg.output_dir
 
         summary = {
-            "env_quality": [asdict(m) for m in metrics]
+            "env_quality": [m.model_dump() for m in metrics]
         }
         (out / "summary.json").write_text(json.dumps(summary, indent=2))
 
