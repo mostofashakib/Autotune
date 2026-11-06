@@ -1,7 +1,6 @@
 """FastAPI backend application for Autotune interactive dashboard."""
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import threading
@@ -10,9 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from autotune.core.domain.models import (
@@ -23,9 +21,8 @@ from autotune.core.domain.models import (
     TrainingObjective,
     TrainingProgress,
 )
-from autotune.core.domain.limits import MAX_UPLOAD_BYTES
 from autotune.core.domain.training_settings import TrainingIntensity
-from autotune.core.services.training_planner import TUNABLE_FIELDS, TrainingPlan, TrainingPlanner, TrainingRequest
+from autotune.core.services.training_planner import TUNABLE_FIELDS, TrainingPlanner, TrainingRequest
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.core.ports.hardware import HardwareProbe
@@ -43,7 +40,8 @@ from autotune.infrastructure.storage.job_store import JobStore
 from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.presentation.api.error_handlers import install_error_handlers
 from autotune.presentation.api.jobs import JobRunner
-from autotune.presentation.api.routes import cloud, serving, system
+from autotune.presentation.api.routes import cloud, datasets, serving, system
+from autotune.presentation.api.routes.datasets import presets_payload, resolve_dataset
 from autotune.presentation.api.state import AppState, ServingSlot
 from autotune.presentation.errors import EXPECTED_FAILURES
 from autotune.settings import (
@@ -128,30 +126,6 @@ def _training_request(req: TrainingStartRequest) -> TrainingRequest:
         overrides={name: fields[name] for name in TUNABLE_FIELDS if fields[name] is not None})
 
 
-def presets_payload(plan: TrainingPlan) -> dict[str, dict]:
-    return {name: preset.model_dump(mode="json") for name, preset in plan.presets.items()}
-
-
-def _uploads_dir() -> Path:
-    return data_dir() / "uploads"
-
-
-def _upload_name(filename: str | None) -> str:
-    """The upload's file name, refusing anything that is a path rather than a bare name."""
-    name = (filename or "").strip()
-    if not name or name in (".", "..") or Path(name).name != name or "\\" in name:
-        raise HTTPException(status_code=400, detail=f"Upload name {filename!r} must be a plain file name")
-    return name
-
-
-def _resolve_dataset(name: str) -> Path:
-    """The dataset path, also looking in the uploads directory."""
-    for candidate in (Path(name), _uploads_dir() / name):
-        if candidate.is_file():
-            return candidate
-    raise HTTPException(status_code=422, detail=f"dataset {name!r} was not found")
-
-
 class BenchmarkRequest(BaseModel):
     mode: Literal["dataset", "harbor"]
     # A held-out export for dataset mode, or a Harbor task directory for harbor mode.
@@ -215,7 +189,7 @@ def create_app() -> FastAPI:
         build_training_backend=lambda: build_training_backend(),
         build_hardware_probe=lambda: build_hardware_probe(),
     )
-    for router in (system.router, cloud.router, serving.router):
+    for router in (system.router, datasets.router, cloud.router, serving.router):
         app.include_router(router)
     install_error_handlers(app)
 
@@ -226,77 +200,15 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    def inspect_upload(dest_path: Path, state: dict[str, Any]) -> dict[str, Any]:
-        def progress(update: dict[str, int]) -> None:
-            state["progress"] = update
-            store.save("ingestion", state["job_id"], state)
-
-        try:
-            cleaned = load_dataset(dest_path, progress)
-            plan = _training_planner().recommend(cleaned, TrainingRequest())
-            result = {
-                "file_name": dest_path.name, "file_path": str(dest_path),
-                "task_type": cleaned.task_type.value, "total_records": cleaned.total_records,
-                "train_records": len(cleaned.train_records), "val_records": len(cleaned.val_records),
-                "dropped_count": cleaned.dropped_count, "warnings": cleaned.warnings,
-                "recipe": plan.recipe.model_dump(mode="json"), "progress": state["progress"],
-                "presets": presets_payload(plan),
-                "preview": [{
-                    "prompt": r.prompt or (r.messages[0].content if r.messages else ""),
-                    "completion": r.completions[0] if r.completions else (r.messages[-1].content if len(r.messages) > 1 else ""),
-                } for r in cleaned.train_records[:3]],
-            }
-            state.update(status="completed", result=result)
-            return result
-        except Exception as exc:
-            logger.exception("Dataset ingestion failed for %s", dest_path.name)
-            state.update(status="failed", error=str(exc))
-            dest_path.unlink(missing_ok=True)
-            raise
-        finally:
-            store.save("ingestion", state["job_id"], state)
-
-    @app.post("/api/dataset/upload")
-    async def upload_dataset(file: UploadFile = File(...), background: bool = False) -> Any:
-        name = _upload_name(file.filename)
-        if any(j.get("dataset_name") == name and j["status"] == "running" for j in store.list("ingestion")):
-            raise HTTPException(status_code=409, detail="This dataset is being processed. Wait for it to finish.")
-        uploads = _uploads_dir()
-        uploads.mkdir(parents=True, exist_ok=True)
-        dest_path = uploads / name
-        data = await file.read(MAX_UPLOAD_BYTES + 1)
-        if len(data) > MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=413, detail="Upload exceeds 100 MiB")
-        dest_path.write_bytes(data)
-        state = {"job_id": f"ingest_{uuid.uuid4().hex[:12]}", "dataset_name": name,
-                 "created_at": _now(), "status": "running", "progress": {}, "error": None}
-        store.save("ingestion", state["job_id"], state)
-        if background:
-            def work() -> None:
-                try:
-                    inspect_upload(dest_path, state)
-                except Exception:
-                    pass  # inspect_upload persists and logs the failure for polling clients.
-            threading.Thread(target=work, daemon=True).start()
-            return JSONResponse(status_code=202, content={"job_id": state["job_id"]})
-        return await asyncio.to_thread(inspect_upload, dest_path, state)
-
-    @app.get("/api/dataset/status/{job_id}")
-    async def dataset_status(job_id: str) -> dict[str, Any]:
-        state = store.get("ingestion", job_id)
-        if state is None:
-            raise HTTPException(status_code=404, detail="Dataset job not found")
-        return state
-
     @app.post("/api/recipe/recommend")
     async def recommend_recipe(req: TrainingStartRequest) -> dict[str, Any]:
-        dataset = load_dataset(_resolve_dataset(req.dataset_name))
+        dataset = load_dataset(resolve_dataset(req.dataset_name))
         plan = _training_planner().recommend(dataset, _training_request(req))
         return {"recipe": plan.recipe.model_dump(mode="json"), "presets": presets_payload(plan)}
 
     @app.post("/api/training/start", status_code=202)
     async def start_training(req: TrainingStartRequest) -> dict[str, Any]:
-        dataset_path = _resolve_dataset(req.dataset_name)
+        dataset_path = resolve_dataset(req.dataset_name)
         cleaned = load_dataset(dataset_path)
         plan = _training_planner().plan(cleaned, _training_request(req))
         recipe = plan.recipe
