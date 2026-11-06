@@ -88,3 +88,25 @@ ignore-docstrings = true
 "tests/unit/test_grpo.py" = ["F401"]
 "tests/unit/test_recipe_selector.py" = ["F401"]
 "tests/unit/test_report.py" = ["F401"]
+
+[tool.importlinter]
+root_package = "autotune"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers: presentation > infrastructure > core"
+type = "layers"
+layers = [
+    "autotune.presentation",
+    "autotune.infrastructure",
+    "autotune.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core stays free of framework dependencies"
+type = "forbidden"
+source_modules = ["autotune.core"]
+forbidden_modules = ["torch", "transformers", "trl", "peft", "pandas", "fastapi", "typer"]
+allow_indirect_imports = true
+# Ratchet: only remove entries from ignore_imports, never add. Task 6 removes this one.
+ignore_imports = ["autotune.core.services.recipe_selector -> torch"]

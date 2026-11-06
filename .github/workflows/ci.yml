@@ -14,6 +14,7 @@ jobs:
       - run: uv run pytest
       - run: uv run ruff check src tests
       - run: uv run pylint --disable=all --enable=duplicate-code src/autotune
+      - run: uv run lint-imports
 
   frontend:
     runs-on: ubuntu-latest
