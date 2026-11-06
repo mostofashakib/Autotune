@@ -165,9 +165,16 @@ def _pass_curves(trials: list[TaskTrial], k_labels: list[int]) -> tuple[list[flo
     return pass_at_k, pass_pow_k
 
 
-def _kappa(trials: list[TaskTrial]) -> float:
+def _kappa(trials: list[TaskTrial]) -> float | None:
+    """Kappa between grader and judge, or None when either rater never varies.
+
+    A rater that gives one answer throughout pins kappa at 0 however closely the
+    other one agrees, so the number would mislead.
+    """
     verifier = [passed for t in trials for passed in t.verifier_passes]
     ground_truth = [passed for t in trials for passed in t.ground_truth_passes]
+    if len(set(verifier)) < 2 or len(set(ground_truth)) < 2:
+        return None
     return round(compute_cohens_kappa(verifier, ground_truth), 4)
 
 

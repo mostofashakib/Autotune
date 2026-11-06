@@ -90,3 +90,24 @@ def test_an_unknown_job_is_404(client):
 
 def test_the_old_evaluate_endpoint_with_canned_scores_is_gone(client):
     assert client.post("/api/evaluate", json={}).status_code in (404, 405)
+
+
+def test_a_benchmark_stored_before_robustness_still_loads(client):
+    score = {"samples": 2, "passed": 1, "errors": 0, "pass_at_1": 0.5, "pass_at_k": 0.5, "mean_score": 0.5}
+    endpoint = {"base_url": "http://b/v1", "model": "base"}
+    legacy_report = {
+        "mode": "dataset", "k": 1, "base_endpoint": endpoint, "trained_endpoint": endpoint,
+        "base": score, "trained": score, "tasks": [],
+        "delta_pass_at_1": 0.0, "delta_pass_at_k": 0.0, "delta_mean_score": 0.0,
+    }
+    client.app.state.autotune.store.save("benchmark", "bench-legacy", {
+        "job_id": "bench-legacy", "status": "completed", "mode": "dataset", "k": 1, "path": "x",
+        "base_model": "base", "trained_model": "trained", "created_at": "2026-01-01T00:00:00+00:00",
+        "logs": [], "error": None, "report": legacy_report,
+    })
+
+    response = client.get("/api/benchmark/bench-legacy")
+
+    assert response.status_code == 200
+    assert response.json()["report"]["base_robustness"] is None
+    assert response.json()["report"]["trained_robustness"] is None

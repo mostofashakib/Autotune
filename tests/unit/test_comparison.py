@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from autotune.core.domain.models import ModelEndpoint, SampleResult
+from autotune.core.domain.models import ComparisonReport, ModelEndpoint, SampleResult
 from autotune.infrastructure.evaluators.comparison import compare
 
 BASE = ModelEndpoint(base_url="http://localhost:8000/v1", model="base")
@@ -129,3 +129,13 @@ def test_comparison_report_carries_both_robustness_scores():
     assert report.base_robustness.pass_at_k[0] == pytest.approx(report.base.pass_at_1, abs=1e-3)
     assert report.trained_robustness.pass_pow_k[-1] == pytest.approx(0.5)
     assert report.base_robustness.grader_judge_kappa is None
+
+
+def test_a_report_stored_before_robustness_still_validates():
+    report = compare("dataset", 1, BASE, TRAINED, _samples("a", [True]), _samples("a", [True]))
+    legacy = report.model_dump(mode="json", exclude={"base_robustness", "trained_robustness"})
+
+    loaded = ComparisonReport.model_validate(legacy)
+
+    assert loaded.base_robustness is None
+    assert loaded.trained_robustness is None
