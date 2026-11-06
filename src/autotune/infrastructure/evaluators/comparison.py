@@ -87,8 +87,8 @@ def _score(task_samples: list[list[SampleResult]], k: int) -> ModelScore:
         samples=len(flat),
         passed=sum(passes),
         errors=sum(sample.error is not None for sample in flat),
-        pass_at_1=fmean(compute_pass_at_k(len(s), c, 1) for s, c in zip(task_samples, passes)),
-        pass_at_k=fmean(compute_pass_at_k(len(s), c, k) for s, c in zip(task_samples, passes)),
+        pass_at_1=fmean(compute_pass_at_k(len(s), c, 1) for s, c in zip(task_samples, passes, strict=True)),
+        pass_at_k=fmean(compute_pass_at_k(len(s), c, k) for s, c in zip(task_samples, passes, strict=True)),
         mean_score=fmean(sample.score for sample in flat),
         mean_judge_score=fmean(judged) if judged else None,
     )

@@ -1,5 +1,4 @@
 """Uploads persist generated splits and expose progress through the job store."""
-import json
 import time
 from unittest.mock import Mock
 

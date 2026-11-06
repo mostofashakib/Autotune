@@ -1,4 +1,3 @@
-import pytest
 from autotune.core.domain.models import CleanedDataset, DatasetRecord, ChatMessage, QuantizationMethod, TaskType
 from autotune.core.services.recipe_selector import AutoRecipeSelector
 
