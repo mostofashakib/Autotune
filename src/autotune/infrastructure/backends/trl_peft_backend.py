@@ -156,7 +156,7 @@ class TrlPeftBackend(TrainingBackend):
                 gradient_accumulation_steps=recipe.gradient_accumulation_steps,
                 num_train_epochs=recipe.epochs,
                 max_length=recipe.max_seq_length,
-                warmup_ratio=recipe.warmup_ratio,
+                warmup_steps=recipe.warmup_ratio,
                 gradient_checkpointing=True,
                 logging_steps=10,
                 save_strategy="epoch",

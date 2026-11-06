@@ -15,7 +15,7 @@ pytestmark = pytest.mark.contract
 COMMON = {"output_dir", "learning_rate", "per_device_train_batch_size", "gradient_accumulation_steps",
           "num_train_epochs", "gradient_checkpointing", "report_to"}
 BACKEND_KEYWORDS = {
-    "SFTConfig": COMMON | {"max_length", "warmup_ratio", "logging_steps", "save_strategy", "eval_strategy", "fp16", "bf16"},
+    "SFTConfig": COMMON | {"max_length", "warmup_steps", "logging_steps", "save_strategy", "eval_strategy", "fp16", "bf16"},
     "DPOConfig": COMMON | {"max_length"},
     "GRPOConfig": COMMON | {"num_generations", "max_completion_length"},
 }

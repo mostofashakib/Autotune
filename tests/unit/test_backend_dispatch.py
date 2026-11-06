@@ -57,6 +57,14 @@ def test_dispatch_honors_advanced_settings(tmp_path, runtime, objective):
         assert seen['train_dataset'][0]['rejected'] == [{'role':'assistant','content':'bad'}]
 
 
+def test_sft_passes_warmup_as_a_step_ratio(tmp_path, runtime):
+    seen, _ = runtime
+    run(tmp_path, TrainingObjective.SFT)
+    # transformers 5 dropped warmup_ratio. A float in [0, 1) for warmup_steps means a ratio of total steps.
+    assert 'warmup_ratio' not in seen['args']
+    assert seen['args']['warmup_steps'] == 0.05
+
+
 def test_grpo_error_does_not_fall_back_to_sft(tmp_path, runtime):
     _, trl = runtime
     trl.GRPOConfig = lambda **kw:kw
