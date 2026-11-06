@@ -141,14 +141,16 @@ def test_robustness_refuses_to_rate_risk_without_any_samples():
 
 
 def test_per_k_values_match_the_estimators_averaged_over_tasks():
+    # Task a: n=4, c=2. Task b: n=6, c=4. pass@k = 1 - C(n-c,k)/C(n,k), pass^k = C(c,k)/C(n,k).
+    # pass@k  a: 1/2, 5/6, 1, 1       b: 2/3, 14/15, 1, 1       mean: 7/12, 53/60, 1, 1
+    # pass^k  a: 1/2, 1/6, 0, 0       b: 2/3, 2/5, 1/5, 1/15    mean: 7/12, 17/60, 1/10, 1/30
     samples = _task("a", [True, True, False, False]) + _task("b", [True, True, True, False, False, True])
 
     score = robustness(samples)
 
     assert score.k_labels == [1, 2, 3, 4]
-    for k, at_k, pow_k in zip(score.k_labels, score.pass_at_k, score.pass_pow_k, strict=True):
-        assert at_k == pytest.approx((compute_pass_at_k(4, 2, k) + compute_pass_at_k(6, 4, k)) / 2, abs=1e-4)
-        assert pow_k == pytest.approx((compute_pass_pow_k(4, 2, k) + compute_pass_pow_k(6, 4, k)) / 2, abs=1e-4)
+    assert score.pass_at_k == pytest.approx([0.5833, 0.8833, 1.0, 1.0], abs=1e-4)
+    assert score.pass_pow_k == pytest.approx([0.5833, 0.2833, 0.1, 0.0333], abs=1e-4)
 
 
 def _graded(passes: int, fails: int, judge_passes: int) -> list[SampleResult]:
