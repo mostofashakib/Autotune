@@ -38,8 +38,8 @@ def _runpod_call(call: Callable[[], Any]) -> Any:
 
 
 @router.get("/api/cloud/gpus")
-async def get_cloud_gpus(api_key: Optional[str] = None) -> list[dict[str, Any]]:
-    return _runpod_call(lambda: RunPodCloudProvider(api_key=api_key).list_available_gpus())
+async def get_cloud_gpus() -> list[dict[str, Any]]:
+    return _runpod_call(lambda: RunPodCloudProvider().list_available_gpus())
 
 
 @router.post("/api/cloud/launch")
@@ -56,7 +56,7 @@ async def launch_cloud_pod(req: RunPodLaunchRequest, state: State) -> dict[str, 
 
 
 @router.get("/api/cloud/pods")
-def list_cloud_pods(state: State, api_key: Optional[str] = None) -> list[dict[str, Any]]:
+def list_cloud_pods(state: State) -> list[dict[str, Any]]:
     """Pods launched from Autotune, with RunPod's live status, or the stored record and why it is stale."""
     pods = []
     for record in state.store.list("pod"):
@@ -64,7 +64,7 @@ def list_cloud_pods(state: State, api_key: Optional[str] = None) -> list[dict[st
             pods.append({**record, "live_error": None})
             continue
         try:
-            live = RunPodCloudProvider(api_key=api_key).get_instance_status(record["pod_id"]).model_dump()
+            live = RunPodCloudProvider().get_instance_status(record["pod_id"]).model_dump()
         except (CredentialNotConfigured, RuntimeError, ConnectionError, ValueError) as exc:
             pods.append({**record, "live_error": str(exc)})
         else:
@@ -73,8 +73,8 @@ def list_cloud_pods(state: State, api_key: Optional[str] = None) -> list[dict[st
 
 
 @router.post("/api/cloud/stop/{pod_id}")
-async def stop_cloud_pod(pod_id: str, state: State, api_key: Optional[str] = None) -> dict[str, Any]:
-    if not _runpod_call(lambda: RunPodCloudProvider(api_key=api_key).stop_instance(pod_id)):
+async def stop_cloud_pod(pod_id: str, state: State) -> dict[str, Any]:
+    if not _runpod_call(lambda: RunPodCloudProvider().stop_instance(pod_id)):
         raise HTTPException(status_code=502, detail=f"RunPod did not terminate pod {pod_id}")
     record = state.store.get("pod", pod_id)
     if record is not None:

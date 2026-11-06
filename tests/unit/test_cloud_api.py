@@ -173,3 +173,29 @@ def test_a_stopped_pod_is_listed_as_terminated_without_asking_runpod(client, sta
 
     assert pod["status"] == "TERMINATED"
     assert status_runpod.calls == []
+
+
+def test_cloud_routes_take_no_key_in_query(client, monkeypatch):
+    monkeypatch.setenv("RUNPOD_API_KEY", "rp-live-123")
+    fake = StatusRunPod()
+    fake.list_available_gpus = lambda: []
+    fake.stop_instance = lambda pod_id: True
+    fake.create_instance = lambda config: RunPodInstance(pod_id="p1", name="t", status="RUNNING", gpu_name="g")
+    keys_received = []
+
+    def recording_provider(api_key=None):
+        keys_received.append(api_key)
+        return fake
+
+    monkeypatch.setattr(cloud, "RunPodCloudProvider", recording_provider)
+    client.post("/api/cloud/launch", json={})
+    keys_received.clear()
+
+    paths = client.get("/openapi.json").json()["paths"]
+    for method, path in [("get", "/api/cloud/gpus"), ("get", "/api/cloud/pods"), ("post", "/api/cloud/stop/{pod_id}")]:
+        assert [p for p in paths[path][method].get("parameters", []) if p["name"] == "api_key"] == []
+
+    for method, path in [("get", "/api/cloud/gpus"), ("get", "/api/cloud/pods"), ("post", "/api/cloud/stop/p1")]:
+        assert client.request(method, f"{path}?api_key=secret").status_code == 200
+
+    assert keys_received and "secret" not in keys_received
