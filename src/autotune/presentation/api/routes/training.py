@@ -20,9 +20,11 @@ from autotune.core.domain.models import (
 from autotune.core.domain.training_settings import TrainingIntensity
 from autotune.core.ports.trainer import TrainingBackend
 from autotune.core.services.training_planner import TUNABLE_FIELDS, TrainingRequest
+from autotune.defaults import CHECKPOINT_DIR
 from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.presentation.api.jobs import JobHandle, summary
 from autotune.presentation.api.routes.datasets import presets_payload, resolve_dataset
+from autotune.presentation.api.schemas import JobStarted, RecipePresets, TrainingCancelling, TrainingRun, TrainingSummary
 from autotune.presentation.api.state import State
 from autotune.settings import HF_TOKEN, require_credential
 
@@ -42,7 +44,7 @@ class TrainingStartRequest(BaseModel):
     batch_size: int | None = Field(default=None, ge=1, le=1024)
     gradient_accumulation_steps: int | None = Field(default=None, ge=1, le=4096)
     max_seq_length: int | None = Field(default=None, ge=128, le=131072)
-    output_dir: str = "./checkpoints/ui-model"
+    output_dir: str = CHECKPOINT_DIR
 
     @field_validator("objective", mode="before")
     @classmethod
@@ -89,14 +91,14 @@ def _train(handle: JobHandle, backend: TrainingBackend, job: TrainingJob, datase
     return {"progress_percent": 100, "checkpoint_dir": result.checkpoint_dir}
 
 
-@router.post("/api/recipe/recommend")
+@router.post("/api/recipe/recommend", response_model=RecipePresets)
 async def recommend_recipe(req: TrainingStartRequest, state: State) -> dict[str, Any]:
     dataset = load_dataset(resolve_dataset(req.dataset_name))
     plan = state.planner().recommend(dataset, _training_request(req))
     return {"recipe": plan.recipe.model_dump(mode="json"), "presets": presets_payload(plan)}
 
 
-@router.post("/api/training/start", status_code=202)
+@router.post("/api/training/start", status_code=202, response_model=JobStarted)
 async def start_training(req: TrainingStartRequest, state: State) -> dict[str, Any]:
     dataset_path = resolve_dataset(req.dataset_name)
     cleaned = load_dataset(dataset_path)
@@ -131,12 +133,12 @@ async def start_training(req: TrainingStartRequest, state: State) -> dict[str, A
     return {"job_id": job_id, "status": "running"}
 
 
-@router.get("/api/training")
+@router.get("/api/training", response_model=list[TrainingSummary])
 async def list_training(state: State) -> list[dict[str, Any]]:
     return [summary(record) for record in state.store.list("training")]
 
 
-@router.get("/api/training/status/{job_id}")
+@router.get("/api/training/status/{job_id}", response_model=TrainingRun)
 async def get_training_status(job_id: str, state: State) -> dict[str, Any]:
     record = state.training.snapshot(job_id)
     if record is None:
@@ -144,7 +146,7 @@ async def get_training_status(job_id: str, state: State) -> dict[str, Any]:
     return record
 
 
-@router.post("/api/training/cancel/{job_id}")
+@router.post("/api/training/cancel/{job_id}", response_model=TrainingCancelling)
 async def cancel_training(job_id: str, state: State) -> dict[str, Any]:
     backend = state.backends.get(job_id)
     if backend is None:

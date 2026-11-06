@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from autotune.core.domain.models import ModelEndpoint
 from autotune.core.ports.evaluator import BenchmarkRunner
+from autotune.defaults import ANSWER_MAX_TOKENS, BENCHMARK_DIR, HARBOR_JOBS_DIR, PASS_K
 from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
 from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmark
 from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark
@@ -16,6 +17,7 @@ from autotune.infrastructure.evaluators.judge import LLMJudge
 from autotune.infrastructure.evaluators.openai_client import OpenAIChatClient
 from autotune.infrastructure.sanitizers.dataset_loader import load_sft
 from autotune.presentation.api.jobs import JobHandle, summary
+from autotune.presentation.api.schemas import BenchmarkRun, BenchmarkSummary, JobStarted
 from autotune.presentation.api.state import State
 from autotune.presentation.errors import EXPECTED_FAILURES
 
@@ -28,12 +30,12 @@ class BenchmarkRequest(BaseModel):
     path: str = Field(min_length=1)
     base: ModelEndpoint
     trained: ModelEndpoint
-    k: int = Field(default=3, ge=1, le=50)
+    k: int = Field(default=PASS_K, ge=1, le=50)
     judge: Optional[ModelEndpoint] = None
     # Answer token budget for dataset mode. Reasoning models need room to think.
-    max_tokens: int = Field(default=4096, ge=1, le=131072)
-    output_dir: str = "benchmark_results"
-    jobs_dir: str = "benchmark_results/harbor_jobs"
+    max_tokens: int = Field(default=ANSWER_MAX_TOKENS, ge=1, le=131072)
+    output_dir: str = BENCHMARK_DIR
+    jobs_dir: str = HARBOR_JOBS_DIR
 
     @model_validator(mode="after")
     def _judge_needs_dataset_mode(self) -> "BenchmarkRequest":
@@ -73,7 +75,7 @@ def _compare(handle: JobHandle, req: BenchmarkRequest, runner: BenchmarkRunner) 
     return {"report": report.model_dump(mode="json")}
 
 
-@router.post("/api/benchmark", status_code=202)
+@router.post("/api/benchmark", status_code=202, response_model=JobStarted)
 async def start_benchmark(req: BenchmarkRequest, state: State) -> dict[str, Any]:
     runner = build_benchmark_runner(req)
     job_id = state.benchmarks.start({
@@ -83,12 +85,12 @@ async def start_benchmark(req: BenchmarkRequest, state: State) -> dict[str, Any]
     return {"job_id": job_id, "status": "running"}
 
 
-@router.get("/api/benchmark")
+@router.get("/api/benchmark", response_model=list[BenchmarkSummary])
 async def list_benchmarks(state: State) -> list[dict[str, Any]]:
     return [_benchmark_summary(record) for record in state.store.list("benchmark")]
 
 
-@router.get("/api/benchmark/{job_id}")
+@router.get("/api/benchmark/{job_id}", response_model=BenchmarkRun)
 async def get_benchmark(job_id: str, state: State) -> dict[str, Any]:
     record = state.benchmarks.snapshot(job_id)
     if record is None:

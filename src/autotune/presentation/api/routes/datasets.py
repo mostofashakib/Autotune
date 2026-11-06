@@ -13,6 +13,7 @@ from autotune.core.domain.limits import MAX_UPLOAD_BYTES
 from autotune.core.services.training_planner import TrainingPlan, TrainingPlanner, TrainingRequest
 from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.presentation.api.jobs import JobHandle
+from autotune.presentation.api.schemas import IngestionAccepted, IngestionJob, UploadedDataset
 from autotune.presentation.api.state import State
 from autotune.settings import data_dir
 
@@ -73,7 +74,10 @@ def inspect_upload(
     }
 
 
-@router.post("/api/dataset/upload")
+@router.post(
+    "/api/dataset/upload", response_model=UploadedDataset,
+    responses={202: {"model": IngestionAccepted, "description": "Accepted when `background=true`; poll the status route."}},
+)
 async def upload_dataset(file: Annotated[UploadFile, File()], state: State, background: bool = False) -> Any:
     name = _upload_name(file.filename)
     if any(j.get("dataset_name") == name and j["status"] == "running" for j in state.store.list("ingestion")):
@@ -106,7 +110,7 @@ async def upload_dataset(file: Annotated[UploadFile, File()], state: State, back
     return outcome["result"]
 
 
-@router.get("/api/dataset/status/{job_id}")
+@router.get("/api/dataset/status/{job_id}", response_model=IngestionJob)
 async def dataset_status(job_id: str, state: State) -> dict[str, Any]:
     record = state.ingestion.snapshot(job_id)
     if record is None:

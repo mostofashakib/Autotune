@@ -10,7 +10,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from autotune.core.domain.models import RunPodConfig
+from autotune.defaults import RUNPOD_DISK_GB, RUNPOD_GPU, RUNPOD_POD_NAME
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
+from autotune.presentation.api.schemas import Gpu, LaunchedPod, Pod, PodStopped
 from autotune.presentation.api.state import State
 from autotune.settings import CredentialNotConfigured
 
@@ -20,9 +22,9 @@ router = APIRouter()
 
 
 class RunPodLaunchRequest(BaseModel):
-    gpu_type: str = "NVIDIA GeForce RTX 4090"
-    pod_name: str = "autotune-pod"
-    disk_gb: int = 50
+    gpu_type: str = RUNPOD_GPU
+    pod_name: str = RUNPOD_POD_NAME
+    disk_gb: int = RUNPOD_DISK_GB
     api_key: Optional[str] = None
 
 
@@ -37,25 +39,20 @@ def _runpod_call(call: Callable[[], Any]) -> Any:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@router.get("/api/cloud/gpus")
+@router.get("/api/cloud/gpus", response_model=list[Gpu])
 async def get_cloud_gpus() -> list[dict[str, Any]]:
     return _runpod_call(lambda: RunPodCloudProvider().list_available_gpus())
 
 
-@router.post("/api/cloud/launch")
+@router.post("/api/cloud/launch", response_model=LaunchedPod)
 async def launch_cloud_pod(req: RunPodLaunchRequest, state: State) -> dict[str, Any]:
-    config = RunPodConfig(
-        gpu_type_id=req.gpu_type,
-        pod_name=req.pod_name,
-        container_disk_in_gb=req.disk_gb,
-        volume_in_gb=req.disk_gb,
-    )
+    config = RunPodConfig.single_disk(req.gpu_type, req.pod_name, req.disk_gb)
     pod = _runpod_call(lambda: RunPodCloudProvider(api_key=req.api_key).create_instance(config).model_dump())
     state.store.save("pod", pod["pod_id"], {**pod, "launched_at": datetime.now(timezone.utc).isoformat()})
     return pod
 
 
-@router.get("/api/cloud/pods")
+@router.get("/api/cloud/pods", response_model=list[Pod])
 def list_cloud_pods(state: State) -> list[dict[str, Any]]:
     """Pods launched from Autotune, with RunPod's live status, or the stored record and why it is stale."""
     pods = []
@@ -72,7 +69,7 @@ def list_cloud_pods(state: State) -> list[dict[str, Any]]:
     return pods
 
 
-@router.post("/api/cloud/stop/{pod_id}")
+@router.post("/api/cloud/stop/{pod_id}", response_model=PodStopped)
 async def stop_cloud_pod(pod_id: str, state: State) -> dict[str, Any]:
     if not _runpod_call(lambda: RunPodCloudProvider().stop_instance(pod_id)):
         raise HTTPException(status_code=502, detail=f"RunPod did not terminate pod {pod_id}")

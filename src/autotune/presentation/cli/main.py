@@ -12,6 +12,10 @@ from autotune.core.domain.models import (
 )
 from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.core.services.recipe_selector import AutoRecipeSelector
+from autotune.defaults import (
+    ANSWER_MAX_TOKENS, BENCHMARK_DIR, CHECKPOINT_DIR, HARBOR_JOBS_DIR, PASS_K,
+    RUNPOD_DISK_GB, RUNPOD_GPU, RUNPOD_POD_NAME, SERVE_PORT,
+)
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.infrastructure.hardware.cuda_probe import CudaProbe
@@ -101,7 +105,7 @@ def inspect(
 @app.command()
 def train(
     dataset_path: Path = typer.Argument(..., help="Path to training dataset"),
-    output_dir: Path = typer.Option("./checkpoints/autotune-model", "--output-dir", "-o", help="Where to save model weights"),
+    output_dir: Path = typer.Option(CHECKPOINT_DIR, "--output-dir", "-o", help="Where to save model weights"),
     base_model: Optional[str] = typer.Option(None, "--base-model", "-m", help="Override default base model"),
     quantization: Optional[str] = typer.Option(None, "--quantization", "-q", help="Override: 'lora_16bit' or 'qlora_4bit_nf4'"),
     objective: Optional[str] = typer.Option(None, "--objective", help="Override: 'sft', 'dpo', or 'grpo'"),
@@ -158,7 +162,7 @@ def train(
 def serve(
     model_path: Path = typer.Argument(..., help="Path to checkpoint directory or Hugging Face model id"),
     name: str = typer.Option("", "--name", "-n", help="Alias for served model"),
-    port: int = typer.Option(8000, "--port", "-p", help="Port to serve on"),
+    port: int = typer.Option(SERVE_PORT, "--port", "-p", help="Port to serve on"),
     gpu_memory_utilization: float = typer.Option(0.85, "--gpu-memory-utilization", help="GPU memory fraction for vLLM"),
 ) -> None:
     """Serve trained model with high-throughput vLLM OpenAI-compatible engine."""
@@ -184,8 +188,8 @@ BaseKeyEnv = typer.Option(None, "--base-key-env", help="Env var holding the base
 TrainedUrl = typer.Option(..., "--trained-url", help="OpenAI-compatible URL serving the trained model")
 TrainedModel = typer.Option(..., "--trained-model", help="Trained model name on that server")
 TrainedKeyEnv = typer.Option(None, "--trained-key-env", help="Env var holding the trained server's API key")
-Samples = typer.Option(3, "--k", "-k", min=1, help="Samples per task (pass@k)")
-Output = typer.Option(Path("benchmark_results"), "--output", "-o", help="Directory for benchmark_report.json")
+Samples = typer.Option(PASS_K, "--k", "-k", min=1, help="Samples per task (pass@k)")
+Output = typer.Option(Path(BENCHMARK_DIR), "--output", "-o", help="Directory for benchmark_report.json")
 
 
 @benchmark_app.command("dataset")
@@ -197,7 +201,7 @@ def benchmark_dataset(
     judge_url: Optional[str] = typer.Option(None, "--judge-url", help="OpenAI-compatible URL for an optional LLM judge"),
     judge_model: Optional[str] = typer.Option(None, "--judge-model", help="Judge model name"),
     judge_key_env: Optional[str] = typer.Option(None, "--judge-key-env", help="Env var holding the judge's API key"),
-    max_tokens: int = typer.Option(4096, "--max-tokens", min=1, help="Answer token budget. Reasoning models need room to think"),
+    max_tokens: int = typer.Option(ANSWER_MAX_TOKENS, "--max-tokens", min=1, help="Answer token budget. Reasoning models need room to think"),
 ) -> None:
     """Answer each held-out prompt k times and score it against the reference."""
     if bool(judge_url) != bool(judge_model):
@@ -218,7 +222,7 @@ def benchmark_harbor(
     base_url: str = BaseUrl, base_model: str = BaseModel, base_key_env: Optional[str] = BaseKeyEnv,
     trained_url: str = TrainedUrl, trained_model: str = TrainedModel, trained_key_env: Optional[str] = TrainedKeyEnv,
     k: int = Samples, output: Path = Output,
-    jobs_dir: Path = typer.Option(Path("benchmark_results/harbor_jobs"), "--jobs-dir", help="Where Harbor writes its trials"),
+    jobs_dir: Path = typer.Option(Path(HARBOR_JOBS_DIR), "--jobs-dir", help="Where Harbor writes its trials"),
     agent: str = typer.Option("terminus-2", "--agent", help="Harbor agent that drives the model"),
 ) -> None:
     """Run each model as an agent on Harbor tasks and grade it with each task's verifier."""
@@ -289,19 +293,14 @@ def cloud_list_gpus(
 
 @cloud_app.command("launch")
 def cloud_launch(
-    gpu_type: str = typer.Option("NVIDIA GeForce RTX 4090", "--gpu", "-g", help="RunPod GPU Type ID"),
-    pod_name: str = typer.Option("autotune-pod", "--name", "-n", help="Name of the pod"),
-    disk_gb: int = typer.Option(50, "--disk", help="Disk size in GB"),
+    gpu_type: str = typer.Option(RUNPOD_GPU, "--gpu", "-g", help="RunPod GPU Type ID"),
+    pod_name: str = typer.Option(RUNPOD_POD_NAME, "--name", "-n", help="Name of the pod"),
+    disk_gb: int = typer.Option(RUNPOD_DISK_GB, "--disk", help="Disk size in GB"),
     api_key: Optional[str] = typer.Option(None, "--api-key", "-k", help="RunPod API Key"),
 ) -> None:
     """Launch a remote GPU pod on RunPod for training."""
     provider = RunPodCloudProvider(api_key=api_key)
-    config = RunPodConfig(
-        gpu_type_id=gpu_type,
-        pod_name=pod_name,
-        container_disk_in_gb=disk_gb,
-        volume_in_gb=disk_gb,
-    )
+    config = RunPodConfig.single_disk(gpu_type, pod_name, disk_gb)
     console.print(f"[bold cyan]Provisioning remote {gpu_type} pod on RunPod...[/]")
     try:
         instance = provider.create_instance(config)

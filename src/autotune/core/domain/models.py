@@ -106,6 +106,11 @@ class RunPodConfig(BaseModel):
     pod_name: str = "autotune-trainer"
     image_name: str = "runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04"
 
+    @classmethod
+    def single_disk(cls, gpu_type_id: str, pod_name: str, disk_gb: int) -> RunPodConfig:
+        """A pod whose container disk and volume are the same size."""
+        return cls(gpu_type_id=gpu_type_id, pod_name=pod_name, container_disk_in_gb=disk_gb, volume_in_gb=disk_gb)
+
 
 class RunPodInstance(BaseModel):
     """Provisioned RunPod GPU pod instance metadata."""
