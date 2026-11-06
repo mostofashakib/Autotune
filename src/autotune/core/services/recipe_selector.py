@@ -1,45 +1,29 @@
 """Hardware and dataset-aware automatic recipe selection for fine-tuning."""
 from __future__ import annotations
 
-import logging
 import math
 from autotune.core.domain.limits import GRPO_MAX_LEARNING_RATE, require_valid_vram
 from autotune.core.domain.model_catalog import MODELS, ModelSpec, fitting_quantization, get_model, memory_baseline
 from autotune.core.domain.training_settings import estimate_memory_gb, validate_training_recipe
 from autotune.core.domain.models import CleanedDataset, QuantizationMethod, Recipe, TaskType, TrainingObjective
 
-logger = logging.getLogger(__name__)
-
 
 class AutoRecipeSelector:
     """Select a model and data-driven hyperparameters within an estimated memory budget."""
 
-    @staticmethod
-    def detect_available_vram_gb() -> float:
-        """Inspect CUDA devices to determine available VRAM in Gigabytes."""
-        try:
-            import torch
-            if torch.cuda.is_available():
-                device = torch.cuda.current_device()
-                free_bytes, _ = torch.cuda.mem_get_info(device)
-                return free_bytes / (1024 ** 3)
-        except Exception as exc:
-            logger.debug("Could not inspect GPU VRAM: %s", exc)
-
-        return 0.0  # CPU fallback or unknown
-
     def select_recipe(
         self,
         dataset: CleanedDataset,
+        *,
+        available_vram_gb: float,
         forced_model: str | None = None,
         forced_quantization: QuantizationMethod | None = None,
         forced_objective: TrainingObjective | None = None,
-        available_vram_gb: float | None = None,
         model_spec: ModelSpec | None = None,
         validate_memory: bool = True,
     ) -> Recipe:
         """Derive an optimal training recipe based on dataset characteristics and hardware."""
-        vram = available_vram_gb if available_vram_gb is not None else self.detect_available_vram_gb()
+        vram = available_vram_gb
         total_samples = dataset.total_records
 
         # 1. Objective selection

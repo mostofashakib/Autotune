@@ -73,7 +73,7 @@ ignore-docstrings = true
 # Ratchet: remove an entry when its file is fixed. Never add one.
 "src/autotune/core/domain/model_catalog.py" = ["PLR0913"]
 "src/autotune/core/ports/serving.py" = ["F401"]
-"src/autotune/core/services/recipe_selector.py" = ["BLE001", "C901", "PLR0912", "PLR0913", "PLR0915"]
+"src/autotune/core/services/recipe_selector.py" = ["C901", "PLR0912", "PLR0913", "PLR0915"]
 "src/autotune/infrastructure/backends/trl_peft_backend.py" = ["C901", "PLR0912", "PLR0915"]
 "src/autotune/infrastructure/cloud/runpod_provider.py" = ["BLE001"]
 "src/autotune/infrastructure/evaluators/comparison.py" = ["B905"]
@@ -109,5 +109,3 @@ type = "forbidden"
 source_modules = ["autotune.core"]
 forbidden_modules = ["torch", "transformers", "trl", "peft", "pandas", "fastapi", "typer"]
 allow_indirect_imports = true
-# Ratchet: only remove entries from ignore_imports, never add. Task 6 removes this one.
-ignore_imports = ["autotune.core.services.recipe_selector -> torch"]

@@ -33,9 +33,11 @@ from autotune.core.services.recipe_selector import AutoRecipeSelector
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend, training_rows
 from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
+from autotune.core.ports.hardware import HardwareProbe
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.core.ports.evaluator import BenchmarkRunner
 from autotune.core.ports.trainer import TrainingBackend
+from autotune.infrastructure.hardware.cuda_probe import CudaProbe
 from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
 from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmark
 from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark, HarborError
@@ -127,6 +129,11 @@ def _now() -> str:
 def build_training_backend() -> TrainingBackend:
     """The backend that trains for real. Its missing dependencies or GPU fail the job."""
     return TrlPeftBackend()
+
+
+def build_hardware_probe() -> HardwareProbe:
+    """The probe that reads the GPU this server trains on."""
+    return CudaProbe()
 
 
 def _uploads_dir() -> Path:
@@ -255,12 +262,11 @@ def create_app() -> FastAPI:
 
     @app.get("/api/models")
     async def models(vram: float | None = Query(default=None, ge=0, allow_inf_nan=False)) -> list[dict]:
-        return catalog_for_vram(AutoRecipeSelector.detect_available_vram_gb() if vram is None else vram)
+        return catalog_for_vram(build_hardware_probe().available_vram_gb() if vram is None else vram)
 
     @app.get("/api/system/status")
     async def get_system_status() -> dict[str, Any]:
-        selector = AutoRecipeSelector()
-        vram = selector.detect_available_vram_gb()
+        vram = build_hardware_probe().available_vram_gb()
         has_cuda = vram > 0
         return {
             "vram_gb": round(vram, 2),
@@ -276,7 +282,7 @@ def create_app() -> FastAPI:
 
         try:
             cleaned = load_dataset(dest_path, progress)
-            recipe = AutoRecipeSelector().select_recipe(cleaned)
+            recipe = AutoRecipeSelector().select_recipe(cleaned, available_vram_gb=build_hardware_probe().available_vram_gb())
             result = {
                 "file_name": dest_path.name, "file_path": str(dest_path),
                 "task_type": cleaned.task_type.value, "total_records": cleaned.total_records,
@@ -341,8 +347,9 @@ def create_app() -> FastAPI:
         try:
             dataset = load_dataset(_resolve_dataset(req.dataset_name))
             model = resolve_model(req.base_model) if req.base_model else None
-            recipe = AutoRecipeSelector().select_recipe(dataset, forced_model=req.base_model,
-                                                        forced_objective=req.objective, model_spec=model)
+            recipe = AutoRecipeSelector().select_recipe(
+                dataset, available_vram_gb=build_hardware_probe().available_vram_gb(),
+                forced_model=req.base_model, forced_objective=req.objective, model_spec=model)
             return {"recipe": recipe.model_dump(mode="json"),
                     "presets": {name: r.model_dump(mode="json") for name, r in intensity_recipes(recipe).items()}}
         except (ValueError, RuntimeError) as exc:
@@ -357,7 +364,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=f"could not parse dataset: {exc}") from exc
         try:
             selector = AutoRecipeSelector()
-            vram = selector.detect_available_vram_gb()
+            vram = build_hardware_probe().available_vram_gb()
             model = resolve_model(req.base_model) if req.base_model else None
             recommended = selector.select_recipe(cleaned, forced_model=req.base_model,
                                                   forced_quantization=req.quantization,

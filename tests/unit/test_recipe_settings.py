@@ -1,4 +1,5 @@
 """Preset scaling and preflight checks keep advanced overrides accountable."""
+from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from autotune.core.domain.models import Recipe, QuantizationMethod, TrainingObjective
@@ -59,7 +60,7 @@ def test_invalid_overrides_are_http_errors_before_launch(tmp_path, monkeypatch, 
 def test_memory_override_is_rejected_by_api(tmp_path, monkeypatch):
     path = tmp_path / 'data.jsonl'
     path.write_text('{"prompt":"p", "completion":"a"}')
-    monkeypatch.setattr(api.AutoRecipeSelector, 'detect_available_vram_gb', staticmethod(lambda: 24))
+    monkeypatch.setattr(api, 'build_hardware_probe', lambda: SimpleNamespace(available_vram_gb=lambda: 24))
     monkeypatch.setattr(api, 'build_training_backend', lambda: pytest.fail('must reject before launch'))
     response = TestClient(api.create_app()).post('/api/training/start', json={'dataset_name':str(path), 'batch_size':64})
     assert response.status_code == 422 and 'sequence length' in response.text
@@ -99,30 +100,10 @@ def test_final_overrides_are_applied_before_memory_validation(tmp_path, monkeypa
     from unittest.mock import Mock
     path = tmp_path / 'data.jsonl'
     path.write_text('{"prompt":"p", "completion":"a"}')
-    monkeypatch.setattr(api.AutoRecipeSelector, 'detect_available_vram_gb', staticmethod(lambda:20))
+    monkeypatch.setattr(api, 'build_hardware_probe', lambda: SimpleNamespace(available_vram_gb=lambda: 20))
     backend = Mock()
     backend.train.side_effect = RuntimeError('stop')
     monkeypatch.setattr(api, 'build_training_backend', lambda:backend)
     response = TestClient(api.create_app()).post('/api/training/start', json={
         'dataset_name':str(path), 'base_model':'Qwen/Qwen2.5-14B-Instruct', 'lora_r':16, 'batch_size':1})
     assert response.status_code == 202, response.text
-
-
-def test_vram_detection_uses_free_cuda_memory(monkeypatch):
-    import sys
-    from types import SimpleNamespace
-    from autotune.core.services.recipe_selector import AutoRecipeSelector
-    cuda = SimpleNamespace(is_available=lambda:True, current_device=lambda:0,
-                           get_device_properties=lambda _:SimpleNamespace(total_memory=24 * 1024**3),
-                           mem_get_info=lambda *_:(10 * 1024**3,24 * 1024**3))
-    monkeypatch.setitem(sys.modules, 'torch', SimpleNamespace(cuda=cuda))
-    assert AutoRecipeSelector.detect_available_vram_gb() == 10
-
-
-def test_mps_is_not_reported_as_a_cuda_training_gpu(monkeypatch):
-    import sys
-    from types import SimpleNamespace
-    from autotune.core.services.recipe_selector import AutoRecipeSelector
-    torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda:False), backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda:True)))
-    monkeypatch.setitem(sys.modules, 'torch', torch)
-    assert AutoRecipeSelector.detect_available_vram_gb() == 0

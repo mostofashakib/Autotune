@@ -37,6 +37,6 @@ def test_rl_grpo_task_selects_grpo_objective():
 def test_forced_grpo_objective():
     selector = AutoRecipeSelector()
     dataset = make_rl_dataset(50)
-    recipe = selector.select_recipe(dataset, forced_objective=TrainingObjective.GRPO)
+    recipe = selector.select_recipe(dataset, available_vram_gb=0.0, forced_objective=TrainingObjective.GRPO)
     assert recipe.objective == TrainingObjective.GRPO
     assert "Qwen" in recipe.base_model

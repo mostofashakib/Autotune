@@ -14,6 +14,7 @@ from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.core.services.recipe_selector import AutoRecipeSelector
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
+from autotune.infrastructure.hardware.cuda_probe import CudaProbe
 from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
 from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmark
 from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark, HarborError
@@ -65,7 +66,7 @@ def inspect(
         console.print(f"[red]Error reading dataset:[/] {exc}")
         raise typer.Exit(code=1)
 
-    recipe = selector.select_recipe(dataset)
+    recipe = selector.select_recipe(dataset, available_vram_gb=CudaProbe().available_vram_gb())
 
     # Dataset Summary Table
     ds_table = Table(title="Dataset Analysis", show_header=True, header_style="bold magenta")
@@ -119,6 +120,7 @@ def train(
     obj_enum = TrainingObjective(objective.lower()) if objective else None
     recipe = selector.select_recipe(
         dataset,
+        available_vram_gb=CudaProbe().available_vram_gb(),
         forced_model=base_model,
         model_spec=resolve_model(base_model) if base_model else None,
         forced_quantization=quant_enum,
