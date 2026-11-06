@@ -117,3 +117,15 @@ def test_write_report_saves_the_measured_report_as_json(tmp_path):
 
     assert path == tmp_path / "out" / "benchmark_report.json"
     assert path.read_text() == report.model_dump_json(indent=2)
+
+
+def test_comparison_report_carries_both_robustness_scores():
+    base = _samples("a", [True, False, False]) + _samples("b", [True, True, True])
+    trained = _samples("a", [True, True, True]) + _samples("b", [True, True, False])
+
+    report = compare("dataset", 3, BASE, TRAINED, base, trained)
+
+    assert report.base_robustness.k_labels == [1, 2, 3]
+    assert report.base_robustness.pass_at_k[0] == pytest.approx(report.base.pass_at_1, abs=1e-3)
+    assert report.trained_robustness.pass_pow_k[-1] == pytest.approx(0.5)
+    assert report.base_robustness.grader_judge_kappa is None

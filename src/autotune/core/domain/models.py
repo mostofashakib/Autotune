@@ -185,6 +185,20 @@ class TaskComparison(BaseModel):
     delta_mean_score: float
 
 
+Risk = Literal["low", "moderate", "high"]
+
+
+class RobustnessScore(BaseModel):
+    """How consistently one model passes, and how far its grader can be trusted."""
+    k_labels: list[int]
+    pass_at_k: list[float]
+    pass_pow_k: list[float]
+    grader_judge_kappa: float | None = None
+    reward_hacking_risk: Risk
+    memorization_risk: Risk | None = None
+    contamination_risk: Risk | None = None
+
+
 class ComparisonReport(BaseModel):
     """Base and trained models measured on the same tasks with the same k."""
     mode: BenchmarkMode
@@ -197,6 +211,9 @@ class ComparisonReport(BaseModel):
     delta_pass_at_1: float
     delta_pass_at_k: float
     delta_mean_score: float
+    # Absent from reports stored before robustness was measured.
+    base_robustness: RobustnessScore | None = None
+    trained_robustness: RobustnessScore | None = None
 
 
 RolloutOutcome = Literal["success", "failure", "partial_success", "edge_case", "truncated"]

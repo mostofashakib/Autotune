@@ -20,6 +20,14 @@ export function statusTone(status: string): Tone {
   return TONES[status] ?? "idle";
 }
 
+/** Risk chips reuse the status colors. A risk that was not measured is neutral. */
+export function riskTone(risk: string | null | undefined): Tone {
+  if (risk === "high") return "bad";
+  if (risk === "moderate") return "warn";
+  if (risk === "low") return "ok";
+  return "idle";
+}
+
 export function formatScore(value: number | null | undefined): string {
   return value === null || value === undefined ? "n/a" : `${(value * 100).toFixed(1)}%`;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatDelta, formatScore, formatWhen, isTerminal, statusTone } from "../lib/format.ts";
+import { formatDelta, formatScore, formatWhen, isTerminal, riskTone, statusTone } from "../lib/format.ts";
 
 test("running is the only non-terminal status", () => {
   assert.equal(isTerminal("running"), false);
@@ -14,6 +14,13 @@ test("each status maps to a tone", () => {
   assert.equal(statusTone("interrupted"), "warn");
   assert.equal(statusTone("cancelled"), "warn");
   assert.equal(statusTone("something-new"), "idle");
+});
+
+test("risk tones go from ok to bad and an unmeasured risk is neutral", () => {
+  assert.equal(riskTone("low"), "ok");
+  assert.equal(riskTone("moderate"), "warn");
+  assert.equal(riskTone("high"), "bad");
+  assert.equal(riskTone(null), "idle");
 });
 
 test("scores show as percentages with one decimal", () => {

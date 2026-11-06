@@ -1,14 +1,15 @@
-"""Tests for benchmark metrics: pass@1, pass@k, pass^k, Cohen's kappa and diagnostics."""
+"""Tests for benchmark metrics: pass@1, pass@k, pass^k, Cohen's kappa and robustness."""
 from __future__ import annotations
 
 import math
 import pytest
+
+from autotune.core.domain.models import SampleResult
 from autotune.infrastructure.evaluators.metrics import (
-    TaskTrial,
     compute_cohens_kappa,
     compute_pass_at_k,
     compute_pass_pow_k,
-    generate_benchmark_graphs,
+    robustness,
 )
 
 
@@ -45,54 +46,81 @@ def test_cohens_kappa_agreement():
     assert compute_cohens_kappa(eval_a, eval_b) < 0.2
 
 
-def test_detect_reward_hacking_and_memorization_and_contamination():
-    hacking_trials = [
-        TaskTrial(
-            task_id=f"t_{i}",
-            passed_samples=2,
-            total_samples=10,
-            verifier_passes=[True, True, False, False],
-            ground_truth_passes=[False, False, False, False],
-        )
-        for i in range(10)
+def _task(task_id: str, outcomes: list[bool], judge: list[float] | None = None) -> list[SampleResult]:
+    judge = judge if judge is not None else [None] * len(outcomes)
+    return [
+        SampleResult(task_id=task_id, passed=passed, score=float(passed), judge_score=j)
+        for passed, j in zip(outcomes, judge, strict=True)
     ]
-    graphs = generate_benchmark_graphs(hacking_trials, max_k=5)
-    assert graphs.diagnostics["reward_hacking_risk"] in ("moderate", "high")
-    assert "pass_curve" in graphs.chart_configs
 
-    mem_trials = [
-        TaskTrial(
-            task_id=f"t_{i}",
-            passed_samples=10,
-            total_samples=10,
-            paraphrased_passed_samples=0,
-            paraphrased_total_samples=10,
-        )
-        for i in range(10)
-    ]
-    graphs_mem = generate_benchmark_graphs(mem_trials, max_k=5)
-    assert graphs_mem.diagnostics["memorization_risk"] == "high"
-    assert graphs_mem.diagnostics["memorization_performance_gap"] > 0.5
 
-    contam_trials = [
-        TaskTrial(
-            task_id=f"high_{i}",
-            passed_samples=10,
-            total_samples=10,
-            ngram_overlap=0.85,
-        )
-        for i in range(5)
-    ] + [
-        TaskTrial(
-            task_id=f"low_{i}",
-            passed_samples=1,
-            total_samples=10,
-            ngram_overlap=0.1,
-        )
-        for i in range(5)
-    ]
-    graphs_contam = generate_benchmark_graphs(contam_trials, max_k=5)
-    assert graphs_contam.diagnostics["contamination_risk"] == "high"
+def test_robustness_curves_span_available_samples():
+    samples = [s for t in "abc" for s in _task(t, [True, False, True, False])]
+
+    score = robustness(samples)
+
+    assert score.k_labels == [1, 2, 3, 4]
+    assert score.pass_at_k[0] == pytest.approx(0.5)
+    assert score.pass_pow_k[0] == pytest.approx(0.5)
+    assert score.pass_pow_k[-1] == 0.0
+    assert score.pass_at_k[-1] == 1.0
+
+
+def test_robustness_uses_the_smallest_sample_count_up_to_ten():
+    samples = _task("a", [True] * 12) + _task("b", [True] * 3)
+
+    assert robustness(samples).k_labels == [1, 2, 3]
+    assert robustness(_task("a", [True] * 12)).k_labels == list(range(1, 11))
+
+
+def test_single_sample_tasks_give_one_point():
+    score = robustness(_task("a", [True]) + _task("b", [False]))
+
+    assert score.k_labels == [1]
+    assert score.pass_at_k == [0.5]
+    assert score.pass_pow_k == [0.5]
+
+
+def test_kappa_is_none_without_a_judge():
+    assert robustness(_task("a", [True, False])).grader_judge_kappa is None
+
+
+def test_kappa_is_none_when_any_sample_lacks_a_judge_score():
+    samples = _task("a", [True, False], [1.0, 0.0]) + _task("b", [True, False])
+
+    assert robustness(samples).grader_judge_kappa is None
+
+
+def test_kappa_compares_grader_with_judge():
+    samples = _task("a", [True, False, True, False], [0.9, 0.1, 0.5, 0.2])
+
+    assert robustness(samples).grader_judge_kappa == pytest.approx(1.0)
+
+
+def test_disagreeing_judge_raises_reward_hacking_risk():
+    samples = _task("a", [True, True, False, False], [0.0, 0.0, 1.0, 1.0])
+
+    score = robustness(samples)
+
+    assert score.grader_judge_kappa == pytest.approx(-1.0)
+    assert score.reward_hacking_risk == "high"
+
+
+def test_large_pass_gap_raises_reward_hacking_risk():
+    samples = [s for t in "abcd" for s in _task(t, [True] + [False] * 9)]
+
+    assert robustness(samples).reward_hacking_risk == "high"
+
+
+def test_consistent_results_have_low_reward_hacking_risk():
+    assert robustness(_task("a", [True] * 4)).reward_hacking_risk == "low"
+
+
+def test_unmeasured_risks_are_none_not_low():
+    score = robustness(_task("a", [True, False]))
+
+    assert score.memorization_risk is None
+    assert score.contamination_risk is None
 
 
 @pytest.mark.parametrize(("n", "c", "k"), [(5, -1, 1), (5, 6, 1), (5, 2, 0), (-1, 0, 1)])
@@ -106,6 +134,6 @@ def test_rejects_invalid_sample_count():
         compute_pass_at_k(n=0, c=0, k=1)
 
 
-def test_graphs_refuse_to_rate_risk_without_any_trials():
-    with pytest.raises(ValueError, match="no trials"):
-        generate_benchmark_graphs([])
+def test_robustness_refuses_to_rate_risk_without_any_samples():
+    with pytest.raises(ValueError, match="no samples"):
+        robustness([])

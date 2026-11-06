@@ -495,6 +495,7 @@ export interface components {
         ComparisonReport: {
             base: components["schemas"]["ModelScore"];
             base_endpoint: components["schemas"]["ModelEndpoint"];
+            base_robustness?: components["schemas"]["RobustnessScore"] | null;
             /** Delta Mean Score */
             delta_mean_score: number;
             /** Delta Pass At 1 */
@@ -512,6 +513,7 @@ export interface components {
             tasks: components["schemas"]["TaskComparison"][];
             trained: components["schemas"]["ModelScore"];
             trained_endpoint: components["schemas"]["ModelEndpoint"];
+            trained_robustness?: components["schemas"]["RobustnessScore"] | null;
         };
         /** CredentialStatus */
         CredentialStatus: {
@@ -776,6 +778,29 @@ export interface components {
         RecipePresets: {
             presets: components["schemas"]["Presets"];
             recipe: components["schemas"]["Recipe"];
+        };
+        /**
+         * RobustnessScore
+         * @description How consistently one model passes, and how far its grader can be trusted.
+         */
+        RobustnessScore: {
+            /** Contamination Risk */
+            contamination_risk?: ("low" | "moderate" | "high") | null;
+            /** Grader Judge Kappa */
+            grader_judge_kappa?: number | null;
+            /** K Labels */
+            k_labels: number[];
+            /** Memorization Risk */
+            memorization_risk?: ("low" | "moderate" | "high") | null;
+            /** Pass At K */
+            pass_at_k: number[];
+            /** Pass Pow K */
+            pass_pow_k: number[];
+            /**
+             * Reward Hacking Risk
+             * @enum {string}
+             */
+            reward_hacking_risk: "low" | "moderate" | "high";
         };
         /** RunPodLaunchRequest */
         RunPodLaunchRequest: {

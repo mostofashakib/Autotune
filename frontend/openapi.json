@@ -339,6 +339,16 @@
           "base_endpoint": {
             "$ref": "#/components/schemas/ModelEndpoint"
           },
+          "base_robustness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RobustnessScore"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "delta_mean_score": {
             "title": "Delta Mean Score",
             "type": "number"
@@ -375,6 +385,16 @@
           },
           "trained_endpoint": {
             "$ref": "#/components/schemas/ModelEndpoint"
+          },
+          "trained_robustness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RobustnessScore"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1002,6 +1022,92 @@
           "presets"
         ],
         "title": "RecipePresets",
+        "type": "object"
+      },
+      "RobustnessScore": {
+        "description": "How consistently one model passes, and how far its grader can be trusted.",
+        "properties": {
+          "contamination_risk": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "moderate",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contamination Risk"
+          },
+          "grader_judge_kappa": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grader Judge Kappa"
+          },
+          "k_labels": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "K Labels",
+            "type": "array"
+          },
+          "memorization_risk": {
+            "anyOf": [
+              {
+                "enum": [
+                  "low",
+                  "moderate",
+                  "high"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memorization Risk"
+          },
+          "pass_at_k": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Pass At K",
+            "type": "array"
+          },
+          "pass_pow_k": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Pass Pow K",
+            "type": "array"
+          },
+          "reward_hacking_risk": {
+            "enum": [
+              "low",
+              "moderate",
+              "high"
+            ],
+            "title": "Reward Hacking Risk",
+            "type": "string"
+          }
+        },
+        "required": [
+          "k_labels",
+          "pass_at_k",
+          "pass_pow_k",
+          "reward_hacking_risk"
+        ],
+        "title": "RobustnessScore",
         "type": "object"
       },
       "RunPodLaunchRequest": {

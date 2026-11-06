@@ -13,6 +13,7 @@ export type ModelEndpoint = Schemas["ModelEndpoint"];
 export type ModelScore = Schemas["ModelScore"];
 export type TaskComparison = Schemas["TaskComparison"];
 export type ComparisonReport = Schemas["ComparisonReport"];
+export type RobustnessScore = Schemas["RobustnessScore"];
 export type BenchmarkSummary = Schemas["BenchmarkSummary"];
 export type BenchmarkRun = Schemas["BenchmarkRun"];
 export type ServingState = Schemas["ServingStatus"];

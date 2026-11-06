@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { use } from "react";
+import { RobustnessCard } from "@/components/Robustness";
 import { ErrorNotice, LogConsole, PageHero, Panel, StatusBadge } from "@/components/ui";
 import { formatDelta, formatScore, formatWhen, isTerminal } from "@/lib/format";
 import type { BenchmarkRun, ModelScore } from "@/lib/types";
@@ -66,6 +67,14 @@ export default function BenchmarkRunPage({ params }: { params: Promise<{ id: str
               </table>
             </div>
           </Panel>
+          {report.base_robustness && report.trained_robustness ? (
+            <Panel index="C" title="Robustness">
+              <div className="grid gap-8 md:grid-cols-2">
+                <RobustnessCard label="Base" score={report.base_robustness} />
+                <RobustnessCard label="Trained" score={report.trained_robustness} />
+              </div>
+            </Panel>
+          ) : null}
         </>
       ) : null}
 

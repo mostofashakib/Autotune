@@ -15,7 +15,7 @@ from autotune.core.domain.models import (
     TaskComparison,
 )
 from autotune.core.ports.evaluator import BenchmarkRunner
-from autotune.infrastructure.evaluators.metrics import compute_pass_at_k
+from autotune.infrastructure.evaluators.metrics import compute_pass_at_k, robustness
 
 REPORT_NAME = "benchmark_report.json"
 
@@ -66,6 +66,8 @@ def compare(
         delta_pass_at_1=trained.pass_at_1 - base.pass_at_1,
         delta_pass_at_k=trained.pass_at_k - base.pass_at_k,
         delta_mean_score=trained.mean_score - base.mean_score,
+        base_robustness=robustness(base_samples),
+        trained_robustness=robustness(trained_samples),
     )
 
 
