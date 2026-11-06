@@ -43,10 +43,10 @@ class JobRunner:
 
     def start(self, fields: dict[str, Any], work: Callable[[JobHandle], dict[str, Any] | None]) -> str:
         job_id = f"{self._id_prefix}-{uuid.uuid4().hex[:12]}"
-        record = {**fields, "id": job_id, "status": "running", "created_at": _now(), "logs": []}
+        record = {**fields, "job_id": job_id, "status": "running", "created_at": _now(), "logs": []}
         with self._lock:
+            self._store.save(self._kind, job_id, record)
             self._live[job_id] = record
-            self._save_locked(job_id)
         thread = threading.Thread(target=self._run, args=(job_id, work), daemon=True)
         self._threads[job_id] = thread
         thread.start()
@@ -80,24 +80,36 @@ class JobRunner:
         except Exception as exc:  # noqa: BLE001 - a worker thread must never die with the job stuck on running
             logger.exception("%s job %s crashed", self._kind, job_id)
             outcome = {"status": "failed", "error": str(exc)}
-        with self._lock:
-            self._live[job_id].update(outcome)
-            self._save_locked(job_id)
-            del self._live[job_id]
+        self._finish(job_id, outcome)
+
+    def _finish(self, job_id: str, outcome: dict[str, Any]) -> None:
+        """Persist the final record. A failing save is logged, and the job leaves the live map regardless."""
+        try:
+            self._commit(job_id, lambda record: record.update(outcome))
+        except Exception:  # noqa: BLE001 - nothing may escape the worker thread
+            logger.exception("%s job %s: final save failed", self._kind, job_id)
+        finally:
+            with self._lock:
+                self._live.pop(job_id, None)
+            self._threads.pop(job_id, None)
 
     def _update(self, job_id: str, fields: dict[str, Any]) -> None:
-        with self._lock:
-            self._live[job_id].update(fields)
-            self._save_locked(job_id)
+        self._commit(job_id, lambda record: record.update(fields))
 
     def _log(self, job_id: str, line: str) -> None:
-        with self._lock:
-            self._live[job_id]["logs"].append(line)
-            self._save_locked(job_id)
+        self._commit(job_id, lambda record: record["logs"].append(line))
 
-    def _save_locked(self, job_id: str) -> None:
-        # Saved under the lock so concurrent writers cannot persist an older state over a newer one.
-        self._store.save(self._kind, job_id, copy.deepcopy(self._live[job_id]))
+    def _commit(self, job_id: str, change: Callable[[dict[str, Any]], object]) -> None:
+        """Apply a change to a copy, save it, and only then make it the live record.
+
+        Saved under the lock so concurrent writers cannot persist an older state over a newer one.
+        A failed save raises and leaves the live record as it was.
+        """
+        with self._lock:
+            updated = copy.deepcopy(self._live[job_id])
+            change(updated)
+            self._store.save(self._kind, job_id, updated)
+            self._live[job_id] = updated
 
 
 def _now() -> str:
