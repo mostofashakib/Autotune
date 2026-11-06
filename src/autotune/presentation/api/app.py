@@ -34,19 +34,20 @@ from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.core.ports.hardware import HardwareProbe
-from autotune.core.ports.sanitizer import IngestionError
 from autotune.core.ports.evaluator import BenchmarkRunner
 from autotune.core.ports.trainer import TrainingBackend
 from autotune.infrastructure.hardware.cuda_probe import CudaProbe
 from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
 from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmark
-from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark, HarborError
-from autotune.infrastructure.evaluators.judge import JudgeError, LLMJudge
-from autotune.infrastructure.evaluators.openai_client import ModelCallError, OpenAIChatClient
-from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
+from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark
+from autotune.infrastructure.evaluators.judge import LLMJudge
+from autotune.infrastructure.evaluators.openai_client import OpenAIChatClient
+from autotune.infrastructure.sanitizers.dataset_loader import load_sft
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 from autotune.infrastructure.storage.job_store import JobStore
 from autotune.presentation.api.dataset_ingestion import load_dataset
+from autotune.presentation.api.error_handlers import install_error_handlers
+from autotune.presentation.errors import EXPECTED_FAILURES
 from autotune.settings import (
     CREDENTIALS,
     HF_TOKEN,
@@ -63,7 +64,6 @@ from autotune.settings import (
 logger = logging.getLogger(__name__)
 
 _ACTIVE_SERVING: Optional[VLLMServingProvider] = None
-_BENCHMARK_FAILURES = (ModelCallError, JudgeError, HarborError, MalformedExportError, ValueError, OSError)
 
 
 class TrainingStartRequest(BaseModel):
@@ -262,6 +262,7 @@ def create_app() -> FastAPI:
         description="LLM Post-Training & Benchmarking Dashboard",
         version="0.1.0",
     )
+    install_error_handlers(app)
 
     app.add_middleware(
         CORSMiddleware,
@@ -354,12 +355,7 @@ def create_app() -> FastAPI:
                     pass  # inspect_upload persists and logs the failure for polling clients.
             threading.Thread(target=work, daemon=True).start()
             return JSONResponse(status_code=202, content={"job_id": state["job_id"]})
-        try:
-            return await asyncio.to_thread(inspect_upload, dest_path, state)
-        except IngestionError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Failed to parse dataset: {exc}") from exc
+        return await asyncio.to_thread(inspect_upload, dest_path, state)
 
     @app.get("/api/dataset/status/{job_id}")
     async def dataset_status(job_id: str) -> dict[str, Any]:
@@ -370,27 +366,18 @@ def create_app() -> FastAPI:
 
     @app.post("/api/recipe/recommend")
     async def recommend_recipe(req: TrainingStartRequest) -> dict[str, Any]:
-        try:
-            dataset = load_dataset(_resolve_dataset(req.dataset_name))
-            plan = _training_planner().recommend(dataset, _training_request(req))
-            return {"recipe": plan.recipe.model_dump(mode="json"), "presets": presets_payload(plan)}
-        except (ValueError, RuntimeError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        dataset = load_dataset(_resolve_dataset(req.dataset_name))
+        plan = _training_planner().recommend(dataset, _training_request(req))
+        return {"recipe": plan.recipe.model_dump(mode="json"), "presets": presets_payload(plan)}
 
     @app.post("/api/training/start", status_code=202)
     async def start_training(req: TrainingStartRequest) -> dict[str, Any]:
         dataset_path = _resolve_dataset(req.dataset_name)
-        try:
-            cleaned = load_dataset(dataset_path)
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f"could not parse dataset: {exc}") from exc
-        try:
-            plan = _training_planner().plan(cleaned, _training_request(req))
-            recipe = plan.recipe
-            if plan.model.gated:
-                require_credential(HF_TOKEN)
-        except (ValueError, CredentialNotConfigured) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        cleaned = load_dataset(dataset_path)
+        plan = _training_planner().plan(cleaned, _training_request(req))
+        recipe = plan.recipe
+        if plan.model.gated:
+            require_credential(HF_TOKEN)
         job_id = f"job_{uuid.uuid4().hex[:12]}"
         job = TrainingJob(id=job_id, dataset_path=str(dataset_path), output_dir=req.output_dir, recipe=recipe, status=JobStatus.RUNNING)
         backend = build_training_backend()
@@ -473,7 +460,7 @@ def create_app() -> FastAPI:
     async def start_benchmark(req: BenchmarkRequest) -> dict[str, Any]:
         try:
             runner = build_benchmark_runner(req)
-        except _BENCHMARK_FAILURES as exc:
+        except OSError as exc:  # An unreadable dataset path is the caller's input, not a server fault.
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         job_id = f"bench_{uuid.uuid4().hex[:12]}"
         job: dict[str, Any] = {
@@ -489,7 +476,7 @@ def create_app() -> FastAPI:
             try:
                 report = run_comparison(req.mode, runner, req.k, req.base, req.trained)
                 path = write_report(report, Path(req.output_dir))
-            except _BENCHMARK_FAILURES as exc:
+            except EXPECTED_FAILURES as exc:
                 logger.warning("benchmark %s failed: %s", job_id, exc)
                 job.update(status="failed", error=str(exc))
                 job["logs"].append(f"Benchmark failed: {exc}")
@@ -587,12 +574,9 @@ def create_app() -> FastAPI:
 
     @app.post("/api/playground/generate")
     def playground_generate(req: PromptGenerationRequest) -> dict[str, str]:
-        try:
-            answer = OpenAIChatClient().complete(
-                req.model, [{"role": "user", "content": req.prompt.strip()}], max_tokens=req.max_tokens,
-            )
-        except ModelCallError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        answer = OpenAIChatClient().complete(
+            req.model, [{"role": "user", "content": req.prompt.strip()}], max_tokens=req.max_tokens,
+        )
         return {"response": answer}
 
     return app

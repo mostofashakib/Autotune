@@ -17,12 +17,13 @@ from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.infrastructure.hardware.cuda_probe import CudaProbe
 from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
 from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmark
-from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark, HarborError
-from autotune.infrastructure.evaluators.judge import JudgeError, LLMJudge
-from autotune.infrastructure.evaluators.openai_client import ModelCallError, OpenAIChatClient
-from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
+from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark
+from autotune.infrastructure.evaluators.judge import LLMJudge
+from autotune.infrastructure.evaluators.openai_client import OpenAIChatClient
+from autotune.infrastructure.sanitizers.dataset_loader import load_sft
 from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
+from autotune.presentation.errors import EXPECTED_FAILURES
 from autotune.settings import export_configured_credentials
 
 app = typer.Typer(
@@ -177,8 +178,6 @@ def serve(
         raise typer.Exit(code=1)
 
 
-BENCHMARK_FAILURES = (ModelCallError, JudgeError, HarborError, MalformedExportError, ValueError)
-
 BaseUrl = typer.Option(..., "--base-url", help="OpenAI-compatible URL serving the base model")
 BaseModel = typer.Option(..., "--base-model", help="Base model name on that server")
 BaseKeyEnv = typer.Option(None, "--base-key-env", help="Env var holding the base server's API key")
@@ -234,7 +233,7 @@ def _run_benchmark(mode, make_runner, k: int, output: Path, base: ModelEndpoint,
     console.print(f"[bold cyan]Benchmarking {base.model} against {trained.model} ({mode}, k={k})...[/]")
     try:
         report = run_comparison(mode, make_runner(), k, base, trained)
-    except BENCHMARK_FAILURES as exc:
+    except EXPECTED_FAILURES as exc:
         console.print(f"[red]Benchmark failed:[/] {exc}")
         raise typer.Exit(code=1)
     path = write_report(report, output)
