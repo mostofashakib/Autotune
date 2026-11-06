@@ -63,3 +63,24 @@ def test_recommend_with_corrupt_document_is_422(monkeypatch, isolated_data_dir):
     (uploads / "broken.pdf").write_bytes(b"%PDF-1.4 garbage")
     response = TestClient(api.create_app()).post("/api/recipe/recommend", json={"dataset_name": "broken.pdf"})
     assert response.status_code == 422, response.text
+
+
+def test_upload_without_document_extras_is_503_with_the_install_command(monkeypatch):
+    import sys
+    from autotune.presentation.api import app as api
+    monkeypatch.setitem(sys.modules, "pypdf", None)
+    response = TestClient(api.create_app()).post("/api/dataset/upload", files={"file": ("notes.md", b"policy")})
+    assert response.status_code == 503, response.text
+    assert "uv sync --extra documents" in response.json()["detail"]
+
+
+def test_recommend_without_document_extras_is_503_with_the_install_command(monkeypatch, isolated_data_dir):
+    import sys
+    from autotune.presentation.api import app as api
+    monkeypatch.setitem(sys.modules, "pypdf", None)
+    uploads = isolated_data_dir / "uploads"
+    uploads.mkdir(parents=True)
+    (uploads / "notes.md").write_text("policy")
+    response = TestClient(api.create_app()).post("/api/recipe/recommend", json={"dataset_name": "notes.md"})
+    assert response.status_code == 503, response.text
+    assert "uv sync --extra documents" in response.json()["detail"]

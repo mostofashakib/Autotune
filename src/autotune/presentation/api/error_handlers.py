@@ -6,7 +6,7 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from autotune.presentation.errors import EXPECTED_FAILURES, http_status
+from autotune.presentation.errors import STATUS_BY_FAILURE, http_status
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +21,6 @@ def _unexpected_failure(request: Request, exc: Exception) -> JSONResponse:
 
 
 def install_error_handlers(app: FastAPI) -> None:
-    for failure in EXPECTED_FAILURES:
+    for failure, _ in STATUS_BY_FAILURE:
         app.add_exception_handler(failure, _expected_failure)
     app.add_exception_handler(Exception, _unexpected_failure)

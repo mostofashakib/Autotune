@@ -458,10 +458,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/benchmark", status_code=202)
     async def start_benchmark(req: BenchmarkRequest) -> dict[str, Any]:
-        try:
-            runner = build_benchmark_runner(req)
-        except OSError as exc:  # An unreadable dataset path is the caller's input, not a server fault.
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        runner = build_benchmark_runner(req)
         job_id = f"bench_{uuid.uuid4().hex[:12]}"
         job: dict[str, Any] = {
             "job_id": job_id, "status": "running", "created_at": _now(), "mode": req.mode, "k": req.k,

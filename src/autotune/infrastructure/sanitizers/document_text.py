@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from autotune.core.domain.errors import MissingExtraError
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.infrastructure.sanitizers.text_decoding import decode_text, html_charset
 
@@ -21,7 +22,7 @@ def _dependencies() -> tuple[Any, Any, Any]:
         from docx import Document
         from bs4 import BeautifulSoup
     except ImportError as exc:
-        raise RuntimeError(INSTALL) from exc
+        raise MissingExtraError(INSTALL) from exc
     return PdfReader, Document, BeautifulSoup
 
 

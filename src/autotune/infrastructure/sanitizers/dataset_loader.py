@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from autotune.core.domain.errors import MissingExtraError
 from autotune.core.domain.models import DatasetRecord, PreferenceRecord, RolloutRecord, SFTRecord
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.infrastructure.sanitizers.sources import collect_sources
@@ -22,7 +23,7 @@ def load_rollouts(path: Path) -> list[RolloutRecord]:
     try:
         import pandas as pd
     except ImportError as exc:
-        raise RuntimeError("loading rollouts requires pandas") from exc
+        raise MissingExtraError("loading rollouts requires pandas") from exc
 
     try:
         df = pd.read_parquet(path)

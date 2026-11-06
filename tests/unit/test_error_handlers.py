@@ -5,6 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
+from autotune.core.domain.errors import MissingExtraError
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.infrastructure.evaluators.harbor_benchmark import HarborError
 from autotune.infrastructure.evaluators.judge import JudgeError
@@ -24,7 +25,8 @@ STATUS_BY_FAILURE = [
     (JudgeError("judge down"), 502),
     (HarborError("harbor down"), 502),
     (ConnectionError("refused"), 502),
-    (FileNotFoundError("missing"), 500),
+    (MissingExtraError("Run: uv sync --extra documents"), 503),
+    (FileNotFoundError("missing"), 422),
 ]
 
 
@@ -72,6 +74,15 @@ def test_an_unexpected_failure_is_logged_and_hidden(caplog):
     assert response.status_code == 500
     assert response.json() == {"detail": "Internal error. See the server log."}
     assert "secret detail" in caplog.text
+
+
+def test_an_unexpected_os_error_hides_its_paths(caplog):
+    with caplog.at_level(logging.ERROR):
+        response = _client(PermissionError("/etc/shadow")).get("/boom")
+
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Internal error. See the server log."}
+    assert "/etc/shadow" in caplog.text
 
 
 def test_http_status_defaults_to_500():

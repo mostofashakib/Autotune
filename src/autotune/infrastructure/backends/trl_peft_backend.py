@@ -16,6 +16,7 @@ from autotune.core.domain.models import (
     TrainingJob,
     TrainingProgress,
 )
+from autotune.core.domain.errors import MissingExtraError
 from autotune.core.domain.training_settings import validate_rows_for
 from autotune.core.ports.trainer import ProgressCallback, TrainingBackend
 from autotune.infrastructure.backends.grpo_rewards import grpo_rows, reference_reward
@@ -38,7 +39,7 @@ class TrlPeftBackend(TrainingBackend):
             from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
         except ImportError as exc:
-            raise RuntimeError(
+            raise MissingExtraError(
                 "Training dependencies missing. Install via `pip install 'autotune[training]'`."
             ) from exc
 
@@ -69,7 +70,7 @@ class TrlPeftBackend(TrainingBackend):
                 model_kwargs["device_map"] = "auto"
                 logger.info("Configured 4-bit NormalFloat (QLoRA) quantization.")
             except ImportError as exc:
-                raise RuntimeError(
+                raise MissingExtraError(
                     "QLoRA requires bitsandbytes. Install via `pip install bitsandbytes`."
                 ) from exc
         elif recipe.quantization == QuantizationMethod.LORA_16BIT:
