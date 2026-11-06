@@ -62,7 +62,7 @@ def test_grpo_error_does_not_fall_back_to_sft(tmp_path, runtime):
     trl.GRPOConfig = lambda **kw:kw
     def broken(**kw): raise RuntimeError('reward configuration missing')
     trl.GRPOTrainer = broken
-    with pytest.raises(RuntimeError, match='reward configuration missing'):
+    with pytest.raises(ValueError, match='reward configuration missing'):
         run(tmp_path, TrainingObjective.GRPO, {'reward': 1.0})
 
 

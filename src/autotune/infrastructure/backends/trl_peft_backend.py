@@ -15,7 +15,7 @@ from autotune.core.domain.models import (
     TrainingJob,
     TrainingProgress,
 )
-from autotune.core.domain.errors import MissingExtraError
+from autotune.core.domain.errors import HardwareUnavailable, MissingExtraError
 from autotune.core.domain.training_settings import validate_rows_for
 from autotune.core.ports.storage import CheckpointStorage
 from autotune.core.ports.trainer import ProgressCallback, TrainingBackend
@@ -45,7 +45,7 @@ class TrlPeftBackend(TrainingBackend):
             raise MissingExtraError(TRAINING_EXTRA_MESSAGE) from exc
 
         if not torch.cuda.is_available():
-            raise RuntimeError("Training requires a CUDA GPU. Run on a supported GPU host or rent a cloud GPU.")
+            raise HardwareUnavailable("Training requires a CUDA GPU. Run on a supported GPU host or rent a cloud GPU.")
 
         out_dir = Path(job.output_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -146,7 +146,7 @@ class TrlPeftBackend(TrainingBackend):
                     processing_class=tokenizer,
                 )
             except Exception as exc:
-                raise RuntimeError(f"GRPO initialization failed. Check the reward configuration and training dependencies: {exc}") from exc
+                raise ValueError(f"GRPO initialization failed. Check the reward configuration and training dependencies: {exc}") from exc
 
         else:
             training_args = SFTConfig(

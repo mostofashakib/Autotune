@@ -1,7 +1,7 @@
 """The failures a user can cause or fix, and the HTTP status each one maps to."""
 from __future__ import annotations
 
-from autotune.core.domain.errors import MissingExtraError, ProviderError
+from autotune.core.domain.errors import HardwareUnavailable, MissingExtraError, ProviderError
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.infrastructure.evaluators.harbor_benchmark import HarborError
 from autotune.infrastructure.evaluators.judge import JudgeError
@@ -13,6 +13,7 @@ from autotune.settings import CredentialNotConfigured, EndpointKeyMissing
 STATUS_BY_FAILURE: tuple[tuple[type[Exception], int], ...] = (
     (CredentialNotConfigured, 503),
     (MissingExtraError, 503),
+    (HardwareUnavailable, 503),
     (ProviderError, 502),
     (ModelCallError, 502),
     (JudgeError, 502),
@@ -31,7 +32,7 @@ EXPECTED_FAILURES: tuple[type[Exception], ...] = (*(failure for failure, _ in ST
 
 
 def http_status(exc: Exception) -> int:
-    """422 for bad input, 503 for a missing credential or extra, 502 for a failing upstream, else 500."""
+    """422 for bad input, 503 for a missing credential, extra, or GPU, 502 for a failing upstream, else 500."""
     for failure, status in STATUS_BY_FAILURE:
         if isinstance(exc, failure):
             return status

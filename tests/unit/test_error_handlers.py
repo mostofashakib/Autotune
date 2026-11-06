@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from autotune.core.domain.errors import MissingExtraError, ProviderError
+from autotune.core.domain.errors import HardwareUnavailable, MissingExtraError, ProviderError
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.infrastructure.evaluators.harbor_benchmark import HarborError
 from autotune.infrastructure.evaluators.judge import JudgeError
@@ -26,6 +26,7 @@ STATUS_BY_FAILURE = [
     (HarborError("harbor down"), 502),
     (ConnectionError("refused"), 502),
     (MissingExtraError("Run: uv sync --extra documents"), 503),
+    (HardwareUnavailable("Training requires a CUDA GPU."), 503),
     (FileNotFoundError("missing"), 422),
     (ProviderError("RunPod down"), 502),
 ]

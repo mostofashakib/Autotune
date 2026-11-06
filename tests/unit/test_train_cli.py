@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import sys
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -168,3 +170,18 @@ def test_cli_inspect_prints_and_writes_environment_quality(cli, tmp_path):
     assert "Environment Quality" in result.output
     assert json.loads((tmp_path / "env_quality.json").read_text())[0]["env_name"] == "mail"
     assert (tmp_path / "env_quality.csv").exists()
+
+
+def test_cli_train_without_cuda_prints_the_message_without_a_traceback(sft_file, monkeypatch):
+    monkeypatch.setattr(main, "CudaProbe", FakeProbe)
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False)))
+    monkeypatch.setitem(sys.modules, "transformers", SimpleNamespace(
+        AutoModelForCausalLM=object, AutoTokenizer=object, TrainerCallback=object))
+    monkeypatch.setitem(sys.modules, "peft", SimpleNamespace(
+        LoraConfig=object, get_peft_model=object, prepare_model_for_kbit_training=object))
+
+    result = CliRunner().invoke(main.app, ["train", str(sft_file), "--base-model", OPEN_MODEL])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "Training requires a CUDA GPU" in result.output

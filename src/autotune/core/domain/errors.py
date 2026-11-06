@@ -7,3 +7,7 @@ class MissingExtraError(RuntimeError):
 
 class ProviderError(RuntimeError):
     """An external service (RunPod, vLLM) failed or rejected a request."""
+
+
+class HardwareUnavailable(RuntimeError):
+    """The machine lacks hardware a feature needs, such as a CUDA GPU."""
