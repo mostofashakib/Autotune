@@ -16,6 +16,7 @@ from autotune.core.domain.models import (
     TrainingJob,
     TrainingProgress,
 )
+from autotune.core.domain.training_settings import validate_rows_for
 from autotune.core.ports.trainer import ProgressCallback, TrainingBackend
 from autotune.infrastructure.backends.grpo_rewards import grpo_rows, reference_reward
 
@@ -234,13 +235,9 @@ def training_rows(records: list[DatasetRecord], objective: TrainingObjective) ->
         return grpo_rows(records)
     if objective != TrainingObjective.DPO:
         return [{"messages": [m.model_dump() for m in record.messages]} for record in records]
-    rows = []
-    for record in records:
-        chosen, rejected = record.metadata.get("chosen"), record.metadata.get("rejected")
-        if not record.prompt or not isinstance(chosen, str) or not isinstance(rejected, str) or not chosen or not rejected or chosen == rejected:
-            raise ValueError("DPO requires a prompt and distinct chosen/rejected responses in every row. Upload only preference rows or select SFT.")
-        rows.append({"prompt": record.prompt, "chosen": chosen, "rejected": rejected})
-    return rows
+    validate_rows_for(objective, records)
+    return [{"prompt": record.prompt, "chosen": record.metadata["chosen"], "rejected": record.metadata["rejected"]}
+            for record in records]
 
 
 def conversational_dpo_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

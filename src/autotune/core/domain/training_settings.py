@@ -5,7 +5,7 @@ import math
 from typing import Literal
 from autotune.core.domain.limits import GRPO_MAX_LEARNING_RATE, require_valid_vram
 from autotune.core.domain.model_catalog import ModelSpec, memory_baseline
-from autotune.core.domain.models import Recipe, TrainingObjective
+from autotune.core.domain.models import DatasetRecord, Recipe, TrainingObjective
 
 TrainingIntensity = Literal["quick", "balanced", "thorough"]
 
@@ -57,3 +57,13 @@ def validate_training_recipe(recipe: Recipe, model: ModelSpec, vram: float) -> N
     # checks CUDA before any tokenizer/model download.
     if vram > 0 and needed > vram:
         raise ValueError(f"Estimated memory {needed:g}GB exceeds {vram:g}GB VRAM. Reduce batch size or max sequence length, use QLoRA, or choose a smaller model.")
+
+
+def validate_rows_for(objective: TrainingObjective, records: list[DatasetRecord]) -> None:
+    """Reject records the selected objective cannot train on."""
+    if objective != TrainingObjective.DPO:
+        return
+    for record in records:
+        chosen, rejected = record.metadata.get("chosen"), record.metadata.get("rejected")
+        if not record.prompt or not isinstance(chosen, str) or not isinstance(rejected, str) or not chosen or not rejected or chosen == rejected:
+            raise ValueError("DPO requires a prompt and distinct chosen/rejected responses in every row. Upload only preference rows or select SFT.")
