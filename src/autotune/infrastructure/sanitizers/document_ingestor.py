@@ -104,6 +104,30 @@ def _verdict(result: Any) -> bool:
     return result["supported"]
 
 
+class _Dedup:
+    """Fingerprints and token sets of accepted pairs, for exact and near-duplicate checks (Jaccard >= 0.85)."""
+
+    def __init__(self) -> None:
+        self._fingerprints: set[str] = set()
+        self._token_sets: list[set[str]] = []
+
+    @staticmethod
+    def _normalize(prompt: str, answer: str) -> str:
+        return " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", prompt + " " + answer).casefold()))
+
+    def is_duplicate(self, prompt: str, answer: str) -> bool:
+        normalized = self._normalize(prompt, answer)
+        if hashlib.sha256(normalized.encode()).hexdigest() in self._fingerprints:
+            return True
+        tokens = _words(normalized)
+        return any(len(tokens & old) / max(1, len(tokens | old)) >= 0.85 for old in self._token_sets)
+
+    def add(self, prompt: str, answer: str) -> None:
+        normalized = self._normalize(prompt, answer)
+        self._fingerprints.add(hashlib.sha256(normalized.encode()).hexdigest())
+        self._token_sets.append(_words(normalized))
+
+
 class DocumentIngestor(DataSanitizer):
     """Turn any upload into records, generating grounded pairs from raw text with source and chunk provenance.
 
@@ -131,21 +155,43 @@ class DocumentIngestor(DataSanitizer):
                                            "a better generator model.", *sources.warnings, *warnings]))
         return assemble_dataset(sources, records, dropped, warnings, val_split_ratio)
 
-    def _generate_records(self, documents: list[tuple[str, str]]) -> tuple[list[DatasetRecord], int, list[str]]:
-        progress = dict(documents_read=0, chunks_made=0, pairs_generated=0, pairs_kept=0)
-        chunks = []
-        for name, text in documents:
+    def _chunks(self, documents: list[tuple[str, str]],
+                after_document: Callable[[int, int], None] | None = None) -> list[tuple[str, str, str]]:
+        """Every document split into (source, chunk id, text). Raises when the chunk cap is exceeded.
+
+        after_document receives the documents read and chunks made so far.
+        """
+        chunks: list[tuple[str, str, str]] = []
+        for read, (name, text) in enumerate(documents, start=1):
             for index, chunk in enumerate(chunk_text(text, self.options.chunk_tokens, self.options.overlap_tokens)):
                 chunks.append((name, f"{name}:{index}", chunk))
                 if len(chunks) > self.options.max_chunks:
                     raise IngestionError("Document chunk cap exceeded. Reduce input or raise AUTOTUNE_DOCUMENT_MAX_CHUNKS.")
-            progress.update(documents_read=progress["documents_read"] + 1, chunks_made=len(chunks))
+            if after_document:
+                after_document(read, len(chunks))
+        return chunks
+
+    def _keep(self, prompt: str, answer: str, chunk: str, seen: _Dedup) -> bool:
+        """Whether a pair passes the length, duplicate, and lexical-support filters."""
+        length = len(LexicalTokenizer().encode(prompt + " " + answer))
+        if not self.options.min_pair_tokens <= length <= self.options.max_pair_tokens:
+            return False
+        if seen.is_duplicate(prompt, answer):
+            return False
+        answer_tokens = _words(answer)
+        return len(answer_tokens & _words(chunk)) / max(1, len(answer_tokens)) >= 0.3
+
+    def _generate_records(self, documents: list[tuple[str, str]]) -> tuple[list[DatasetRecord], int, list[str]]:
+        progress = dict(documents_read=0, chunks_made=0, pairs_generated=0, pairs_kept=0)
+        def report_document(documents_read: int, chunks_made: int) -> None:
+            progress.update(documents_read=documents_read, chunks_made=chunks_made)
             self._report(progress)
+
+        chunks = self._chunks(documents, report_document)
         records: list[DatasetRecord] = []
         warnings: list[str] = []
         failed_chunks = 0
-        fingerprints: set[str] = set()
-        token_sets: list[set[str]] = []
+        seen = _Dedup()
         for source, chunk_id, chunk in chunks:
             pairs = self._generate(chunk)
             if pairs is None:
@@ -154,24 +200,14 @@ class DocumentIngestor(DataSanitizer):
                 continue
             progress["pairs_generated"] += len(pairs)
             for prompt, answer in pairs:
-                normalized = " ".join(re.findall(r"\w+", unicodedata.normalize("NFKC", prompt + " " + answer).casefold()))
-                fingerprint = hashlib.sha256(normalized.encode()).hexdigest()
-                tokens = _words(normalized)
-                length = len(LexicalTokenizer().encode(prompt + " " + answer))
-                if not self.options.min_pair_tokens <= length <= self.options.max_pair_tokens:
-                    continue
-                if fingerprint in fingerprints or any(len(tokens & old) / max(1, len(tokens | old)) >= 0.85 for old in token_sets):
-                    continue
-                answer_tokens = _words(answer)
-                if len(answer_tokens & _words(chunk)) / max(1, len(answer_tokens)) < 0.3:
+                if not self._keep(prompt, answer, chunk, seen):
                     continue
                 grounded = self._grounded(chunk, prompt, answer)
                 if grounded is None:
                     warnings.append(f"Dropped a pair from chunk {chunk_id}: the grounding check returned malformed JSON twice.")
                 if not grounded:
                     continue
-                fingerprints.add(fingerprint)
-                token_sets.append(tokens)
+                seen.add(prompt, answer)
                 records.append(DatasetRecord(
                     id=f"doc_{len(records):06d}",
                     messages=[ChatMessage(role="user", content=prompt), ChatMessage(role="assistant", content=answer)],

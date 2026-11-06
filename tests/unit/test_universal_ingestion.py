@@ -283,3 +283,33 @@ def test_zip_that_is_not_a_forge_bundle_still_rejects_mixed_data(tmp_path):
     bundle = archive(tmp_path, {"chat.jsonl": SFT_ROWS, "grpo_rollouts.parquet": forge_rollouts()})
     with pytest.raises(IngestionError, match="mixes"):
         collect_sources(bundle)
+
+
+def test_archive_with_1000_members_reads_quickly(tmp_path):
+    import time
+
+    from autotune.infrastructure.sanitizers.sources import collect_sources
+    path = tmp_path / "many.zip"
+    with zipfile.ZipFile(path, "w") as bundle:
+        for index in range(1000):
+            bundle.writestr(f"docs/note_{index:04d}.md", f"Note {index} says the policy requires daily review.")
+    started = time.perf_counter()
+    sources = collect_sources(path)
+    assert time.perf_counter() - started < 2
+    assert len(sources.documents) == 1000
+
+
+def test_archive_classifies_each_member_once(tmp_path, monkeypatch):
+    from autotune.infrastructure.sanitizers import sources as sources_module
+    path = tmp_path / "few.zip"
+    with zipfile.ZipFile(path, "w") as bundle:
+        for index in range(20):
+            bundle.writestr(f"note_{index}.md", "text")
+        bundle.writestr(".DS_Store", "x")
+    calls = []
+    real = sources_module._is_system_file
+    monkeypatch.setattr(sources_module, "_is_system_file", lambda name: calls.append(name) or real(name))
+    members, warnings = sources_module._archive_members(path)
+    assert len(members) == 20
+    assert warnings == ["Skipped 1 system files such as .DS_Store and __MACOSX entries."]
+    assert len(calls) == 21

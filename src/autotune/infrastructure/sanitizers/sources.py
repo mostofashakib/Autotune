@@ -85,12 +85,12 @@ def _archive_members(path: Path) -> tuple[list[tuple[str, bytes]], list[str]]:
             if name.is_absolute() or ".." in name.parts or "\\" in item.filename or item.filename in seen:
                 raise IngestionError(f"Unsafe archive path: {item.filename}")
             seen.add(item.filename)
-        system = [i for i in files if _is_system_file(PurePosixPath(i.filename))]
+        system = {i.filename for i in files if _is_system_file(PurePosixPath(i.filename))}
         warnings = [f"Skipped {len(system)} system files such as .DS_Store and __MACOSX entries."] if system else []
         members = []
         for item in files:
             suffix = PurePosixPath(item.filename).suffix.lower()
-            if item in system:
+            if item.filename in system:
                 continue
             if suffix not in DOCUMENT_SUFFIXES | STRUCTURED_SUFFIXES:
                 warnings.append(f"Skipped archive member: {item.filename} has unsupported type {suffix or '(none)'}.")

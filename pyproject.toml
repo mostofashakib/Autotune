@@ -83,7 +83,6 @@ ignore-docstrings = true
 "src/autotune/infrastructure/cloud/runpod_provider.py" = ["BLE001"]
 "src/autotune/infrastructure/evaluators/comparison.py" = ["B905"]
 "src/autotune/infrastructure/evaluators/harbor_benchmark.py" = ["PLR0913"]
-"src/autotune/infrastructure/sanitizers/document_ingestor.py" = ["C901"]
 "src/autotune/infrastructure/serving/vllm_provider.py" = ["BLE001"]
 "tests/unit/test_document_api.py" = ["F401"]
 "tests/unit/test_grpo.py" = ["F401"]
