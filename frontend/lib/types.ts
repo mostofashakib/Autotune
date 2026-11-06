@@ -6,6 +6,7 @@ type Schemas = components["schemas"];
 export type SystemStatus = Schemas["SystemStatus"];
 export type Recipe = Schemas["Recipe"];
 export type UploadedDataset = Schemas["UploadedDataset"];
+export type IngestionJob = Schemas["IngestionJob"];
 export type TrainingSummary = Schemas["TrainingSummary"];
 export type TrainingRun = Schemas["TrainingRun"];
 export type ModelEndpoint = Schemas["ModelEndpoint"];

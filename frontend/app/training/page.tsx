@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ErrorNotice, PageHero, Panel, StatusBadge } from "@/components/ui";
 import { apiGet, apiPost, apiUpload, describeError } from "@/lib/api";
-import { formatWhen } from "@/lib/format";
-import type { CatalogModel, Recipe, TrainingSummary, UploadedDataset } from "@/lib/types";
+import { formatWhen, isTerminal } from "@/lib/format";
+import { pollUntil } from "@/lib/polling";
+import type { CatalogModel, IngestionJob, Recipe, TrainingSummary, UploadedDataset } from "@/lib/types";
 import { usePolling } from "@/lib/usePolling";
 
 type Overrides = Recipe & { output_dir: string };
@@ -30,31 +31,42 @@ export default function TrainingPage() {
 
   const [ingestionProgress, setIngestionProgress] = useState<Record<string, number>>({});
 
+  const uploadAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => uploadAbort.current?.abort(), []);
+
   async function upload(file: File) {
+    uploadAbort.current?.abort();
+    const controller = new AbortController();
+    uploadAbort.current = controller;
     setBusy("upload");
     setError(null);
     try {
       setIngestionProgress({});
       const { job_id } = await apiUpload<{ job_id: string }>("/api/dataset/upload?background=true", file);
-      let uploaded: UploadedDataset;
-      for (;;) {
-        const state = await apiGet<{ status: string; progress: Record<string, number>; error: string | null; result?: UploadedDataset }>(`/api/dataset/status/${job_id}`);
-        setIngestionProgress(state.progress);
-        if (state.status === "completed" && state.result) { uploaded = state.result; break; }
-        if (["failed", "interrupted"].includes(state.status)) throw new Error(state.error ?? "Dataset ingestion failed");
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
+      const state = await pollUntil(
+        async (signal) => {
+          const job = await apiGet<IngestionJob>(`/api/dataset/status/${job_id}`, signal);
+          setIngestionProgress(job.progress);
+          return job;
+        },
+        (job) => isTerminal(job.status),
+        1000,
+        controller.signal,
+      );
+      if (state.status !== "completed" || !state.result) throw new Error(state.error ?? "Dataset ingestion failed");
+      const uploaded = state.result;
       setDataset(uploaded);
       setForm(overridesFrom(uploaded));
       setPresets(uploaded.presets);
       setIntensity("balanced");
       setCustomModel(false);
     } catch (cause) {
+      if (controller.signal.aborted) return;
       setDataset(null);
       setForm(null);
       setError(describeError(cause));
     } finally {
-      setBusy(null);
+      if (!controller.signal.aborted) setBusy(null);
     }
   }
 
