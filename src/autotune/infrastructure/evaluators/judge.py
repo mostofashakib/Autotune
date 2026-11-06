@@ -1,18 +1,16 @@
 """An LLM judge that scores an answer against the reference from 0 to 1."""
 from __future__ import annotations
 
-import json
-import re
 from typing import Protocol
 
 from autotune.core.domain.models import ModelEndpoint
+from autotune.infrastructure.llm_json import MalformedReply, parse_json_reply
 
 _SYSTEM = (
     "You grade a model's answer against a reference answer. Judge whether the answer "
     "accomplishes what the reference does, allowing different wording. Reply with JSON "
     'only: {"score": <number from 0 to 1>, "reason": "<one sentence>"}.'
 )
-_JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
 
 class JudgeError(RuntimeError):
@@ -41,10 +39,9 @@ class LLMJudge:
 
 
 def _parse_score(reply: str) -> float:
-    match = _JSON_OBJECT.search(reply)
     try:
-        value = json.loads(match.group(0))["score"] if match else None
-    except (ValueError, KeyError, TypeError) as exc:
+        value = parse_json_reply(reply)["score"]
+    except (MalformedReply, KeyError, TypeError) as exc:
         raise JudgeError(f"judge reply is not a JSON score: {reply[:200]!r}") from exc
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
         raise JudgeError(f"judge score must be a number from 0 to 1: {reply[:200]!r}")
