@@ -59,3 +59,17 @@ def test_presets_cover_three_intensities():
     plan = planner().recommend(chat_dataset(), TrainingRequest())
     assert set(plan.presets) == {"quick", "balanced", "thorough"}
     assert plan.vram_gb == 48.0
+
+
+def test_plan_model_matches_recipe_after_smaller_model_fallback():
+    largest_fitting = "Qwen/Qwen2.5-7B-Instruct"
+    plan = planner(12.0).plan(chat_dataset(), TrainingRequest())
+    assert plan.recipe.base_model != largest_fitting
+    assert plan.model.hf_id == plan.recipe.base_model
+
+
+def test_plan_validates_the_overridden_recipe():
+    request = TrainingRequest(overrides={"batch_size": 4096})
+    assert planner().recommend(chat_dataset(), request).recipe.batch_size != 4096
+    with pytest.raises(ValueError, match="exceeds"):
+        planner().plan(chat_dataset(), request)
