@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
+from autotune.infrastructure.storage.checkpoint import PolicyCheckpoint
 from autotune.presentation.api.jobs import JobHandle
 from autotune.presentation.api.schemas import GgufExport, JobStarted
 from autotune.presentation.api.state import State
@@ -23,6 +24,7 @@ async def export_gguf(job_id: str, state: State) -> dict[str, Any]:
     if not record.get("checkpoint_dir"):
         raise HTTPException(status_code=409, detail=f"Job {job_id} has no checkpoint to export")
     checkpoint_dir = Path(record["checkpoint_dir"])
+    _require_owned_by(checkpoint_dir, job_id)
     output_file = checkpoint_dir / GGUF_NAME
 
     def work(handle: JobHandle) -> dict[str, Any]:
@@ -34,6 +36,19 @@ async def export_gguf(job_id: str, state: State) -> dict[str, Any]:
     export_id = state.exports.start(
         {"training_job_id": job_id, "checkpoint_dir": str(checkpoint_dir), "gguf_path": None, "error": None}, work)
     return {"job_id": export_id, "status": "running"}
+
+
+def _require_owned_by(checkpoint_dir: Path, job_id: str) -> None:
+    """Refuse to export weights a later job wrote over this job's shared checkpoint dir."""
+    try:
+        owner = PolicyCheckpoint.load(checkpoint_dir).run_id
+    except FileNotFoundError:
+        raise HTTPException(status_code=409, detail=(
+            f"Checkpoint in {checkpoint_dir} has no manifest naming its job. Re-run training for {job_id}.")) from None
+    if owner != job_id:
+        raise HTTPException(status_code=409, detail=(
+            f"Checkpoint in {checkpoint_dir} now belongs to job {owner}. "
+            f"Re-run training for {job_id} or export the newer job."))
 
 
 @router.get("/api/exports/{export_id}", response_model=GgufExport)

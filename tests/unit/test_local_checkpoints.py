@@ -99,8 +99,14 @@ def _seed(isolated_data_dir, job_id, **fields):
     JobStore(isolated_data_dir / "autotune.db").save("training", job_id, {"job_id": job_id, "status": "completed", **fields})
 
 
+def _manifest(checkpoint_dir, run_id):
+    PolicyCheckpoint(objective="sft", base_model="m", model_path=str(checkpoint_dir), num_examples=1,
+                     run_id=run_id).save(checkpoint_dir)
+
+
 def test_export_route_starts_a_job(client, isolated_data_dir, tmp_path):
     _seed(isolated_data_dir, "job_a", checkpoint_dir=str(tmp_path / "ckpt"))
+    _manifest(tmp_path / "ckpt", "job_a")
     storage = FakeStorage()
     client.app.state.autotune.checkpoints = storage
 
@@ -122,6 +128,33 @@ def test_export_route_404s_for_unknown_job(client):
 def test_export_route_409s_without_a_checkpoint(client, isolated_data_dir):
     _seed(isolated_data_dir, "job_b", checkpoint_dir=None)
     assert client.post("/api/training/job_b/export-gguf").status_code == 409
+
+
+def test_export_route_refuses_a_checkpoint_a_later_job_overwrote(client, isolated_data_dir, tmp_path):
+    shared = tmp_path / "ckpt"
+    _seed(isolated_data_dir, "job_a", checkpoint_dir=str(shared))
+    _seed(isolated_data_dir, "job_b", checkpoint_dir=str(shared))
+    _manifest(shared, "job_b")
+    client.app.state.autotune.checkpoints = FakeStorage()
+
+    stale = client.post("/api/training/job_a/export-gguf")
+    current = client.post("/api/training/job_b/export-gguf")
+
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == (f"Checkpoint in {shared} now belongs to job job_b. "
+                                      "Re-run training for job_a or export the newer job.")
+    assert current.status_code == 202
+    client.app.state.autotune.exports.join(current.json()["job_id"], 5)
+
+
+def test_export_route_409s_when_the_checkpoint_has_no_manifest(client, isolated_data_dir, tmp_path):
+    _seed(isolated_data_dir, "job_a", checkpoint_dir=str(tmp_path / "ckpt"))
+    client.app.state.autotune.checkpoints = FakeStorage()
+
+    response = client.post("/api/training/job_a/export-gguf")
+
+    assert response.status_code == 409
+    assert "Re-run training for job_a" in response.json()["detail"]
 
 
 def test_export_status_404s_for_unknown_export(client):
