@@ -94,6 +94,8 @@ Inspect a structured dataset file or document archive to see detected task types
 uv run autotune inspect my_data.jsonl
 ```
 
+Point `inspect` at a Forge bundle that holds `trajectories.jsonl` or `grpo_rollouts.parquet` and it also prints environment quality per environment: episodes, steps, reward density, dead-end rate, action diversity, and state coverage. It writes the same numbers to `env_quality.json` and `env_quality.csv` beside the input file. Uploads return environment quality from the same two files in `environment_quality`.
+
 ### 3. Train a Model (SFT, DPO, or GRPO)
 Run post-training with automated model selection and LoRA/QLoRA tuning:
 ```bash
@@ -105,13 +107,28 @@ uv run autotune train my_preference_data.jsonl --objective dpo --output-dir ./ch
 
 # Reinforcement Learning with GRPO
 uv run autotune train my_rl_data.parquet --objective grpo --output-dir ./checkpoints/my-rl-model
+
+# Pick a training intensity: quick, balanced (default), or thorough
+uv run autotune train my_data.jsonl --intensity quick
 ```
 
-### 4. Serve with vLLM
+`--intensity` scales the recommended epochs and learning rate with the presets in [Basic and Advanced Training Settings](#basic-and-advanced-training-settings). Without `--output-dir`, every run writes to `./checkpoints/autotune-model`, so a new run replaces the last one.
+
+GRPO needs a numeric reward in every row, in `total_reward`, `reward`, `rewards`, or `per_step_rewards`. Autotune reads them in that order and sums a list. Numeric strings count, and true/false values and NaN do not. A file with any unrewarded row fails before the model downloads and tells you how many rows lack a reward. For each prompt, the completion with the highest reward becomes the reference answer, and GRPO scores each generated answer by its token F1 against that reference.
+
+### 4. Serve with vLLM or Export to GGUF
 Launch an OpenAI-compatible vLLM server:
 ```bash
 uv run autotune serve ./checkpoints/my-model --port 8000
 ```
+
+Export a checkpoint to one GGUF file for llama.cpp, Ollama, or LM Studio. `autotune export-gguf` merges the LoRA adapter into its base model and runs llama.cpp's `convert_hf_to_gguf.py`. Set `LLAMA_CPP_DIR` to your llama.cpp checkout first, and install the training extras with `uv sync --extra training`.
+```bash
+export LLAMA_CPP_DIR=~/src/llama.cpp
+uv run autotune export-gguf ./checkpoints/my-model --output ./my-model.gguf
+```
+
+The web UI calls `POST /api/training/{job_id}/export-gguf`. It answers 409 when a later run has overwritten that job's checkpoint directory, so you never ship another job's weights.
 
 ### 5. Cloud GPUs on RunPod
 List available GPU instances and deploy on-demand training pods:
@@ -149,6 +166,10 @@ uv run autotune benchmark harbor ./tasks \
 ```
 
 Both write `benchmark_results/benchmark_report.json`. A model that stops answering, a judge that fails, or a Harbor run with no trial results stops the benchmark with an error instead of reporting partial numbers. Crashed Harbor trials count as failures and are reported as errors. Reasoning models need room to think, so raise `--max-tokens` (default 4096) if one runs out of tokens. API keys stay in the env vars you name with `--base-key-env`, `--trained-key-env`, and `--judge-key-env`.
+
+Held-out files load strictly. A malformed line or invalid row fails the benchmark, and the error lists the bad lines. Training drops such rows with a warning instead, but a benchmark on silently thinned data would report the wrong numbers.
+
+The benchmark page adds a Robustness panel for each model. It plots pass@k, the chance that at least one of k answers passes, against pass^k, the chance that all k pass. A wide gap means the model passes some of the time but not reliably. With a judge configured, the panel shows Cohen's kappa between the reference grader and the judge. "No judge configured" means no sample had a judge score. "Not measured: a rater never varied" means one of the two gave the same verdict on every sample. Each risk gets a tier of low, moderate, or high. Reward hacking risk rises with the pass@k to pass^k gap and with low grader and judge agreement. Memorization and contamination need paraphrased items and n-gram overlap, which Autotune does not collect, so they show "Not measured".
 
 ### 7. Development Scripts
 ```bash
@@ -208,7 +229,7 @@ Basic shows model, objective, and intensity. Presets live in `core/domain/traini
 
 GRPO stays at or below `0.00002`. Advanced starts collapsed and exposes quantization, LoRA rank and alpha, learning rate, epochs, batch size, gradient accumulation, and sequence length. Changed values are marked against the upload recommendation. Reset restores that recommendation. Selecting a new model or objective refreshes its recommended settings from the server.
 
-`POST /api/recipe/recommend` accepts `dataset_name` and optional `base_model` and `objective`, returning a recipe and all presets. `POST /api/training/start` accepts `intensity` (default `balanced`), `gradient_accumulation_steps`, and `max_seq_length` alongside its existing fields. Omitted settings retain auto values. Explicit numeric overrides take precedence over the intensity preset.
+`POST /api/recipe/recommend` accepts `dataset_name` and optional `base_model`, `objective`, and `quantization`, returning a recipe and all presets. A forced `quantization` shapes the recommendation the same way it shapes the run that `POST /api/training/start` plans. `POST /api/training/start` accepts `intensity` (default `balanced`), `gradient_accumulation_steps`, and `max_seq_length` alongside its existing fields. Omitted settings retain auto values. Explicit numeric overrides take precedence over the intensity preset.
 
 Preflight checks reject invalid numbers, sequences beyond the model context, and memory estimates above detected VRAM. Memory scales with parameter count, precision, batch size, sequence length, rank, and objective. Gradient accumulation adds steps rather than concurrent activations. Auto selection reduces batch size and increases accumulation to fit. Errors explain which settings to reduce. CPU-only inspection remains available, but the real trainer requires CUDA before downloading a model. These settings add no environment variables.
 
@@ -219,6 +240,8 @@ Training extras require TRL 0.18 or newer and Transformers 4.49 or newer. SFT an
 ## Integration with Forge
 
 Need execution-verified training data? Use [Forge](https://github.com/mostofashakib/Forge) to synthesize sandboxed tasks, simulated personas, and multi-turn agent trajectories. Autotune natively ingests Forge export bundles (`sft_pairs.jsonl`, `preference_pairs.jsonl`, `grpo_rollouts.parquet`). The two never import or call each other. Forge data reaches Autotune as exported files or Harbor task directories.
+
+A Forge bundle holds several exports of one run. When a zip holds two or more Forge training exports, Autotune trains on one of them, chosen in this order: `sft_pairs.jsonl`, `sft_dataset.jsonl`, `sft_data.jsonl`, `batch_export.json`, `tasks.json`, `preference_pairs.jsonl`, then `grpo_rollouts.parquet`. The upload warnings name the files it skipped. Upload a skipped file alone to train on it. `trajectories.jsonl` and `grpo_rollouts.parquet` also feed the environment quality report described in [Inspect a Dataset](#2-inspect-a-dataset).
 
 ---
 
