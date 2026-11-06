@@ -47,7 +47,8 @@ training = [
 autotune = "autotune.presentation.cli.main:app"
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit"]
+testpaths = ["tests/unit", "tests/contract"]
+markers = ["contract: checks the installed training libraries (needs --extra training)"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
 

@@ -16,6 +16,14 @@ jobs:
       - run: uv run pylint --disable=all --enable=duplicate-code src/autotune
       - run: uv run lint-imports
 
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync --extra dev --extra training
+      - run: uv run pytest -m contract tests/contract
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

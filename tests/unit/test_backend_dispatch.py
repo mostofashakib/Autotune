@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from autotune.core.domain.models import CleanedDataset, DatasetRecord, ChatMessage, Recipe, QuantizationMethod, TrainingObjective, TrainingJob, TaskType
+from autotune.infrastructure.backends.grpo_rewards import reference_reward
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 
 
@@ -29,13 +30,15 @@ def runtime(monkeypatch):
     trl = SimpleNamespace(SFTConfig=config, DPOConfig=config,
                           SFTTrainer=lambda **kw:trainer('sft', **kw), DPOTrainer=lambda **kw:trainer('dpo', **kw))
     monkeypatch.setitem(sys.modules, 'trl', trl)
+    trl.GRPOConfig = lambda **kw:kw
+    trl.GRPOTrainer = lambda **kw:trainer('grpo', **kw)
     return seen, trl
 
 
-def run(tmp_path, objective):
+def run(tmp_path, objective, metadata=None):
     recipe = Recipe(base_model='Qwen/Qwen2.5-1.5B-Instruct', quantization=QuantizationMethod.NONE, objective=objective,
                     epochs=5, batch_size=3, gradient_accumulation_steps=7, max_seq_length=1024)
-    record = DatasetRecord(prompt='p', messages=[ChatMessage(role='user',content='p'),ChatMessage(role='assistant',content='good')], metadata={'chosen':'good','rejected':'bad'})
+    record = DatasetRecord(prompt='p', messages=[ChatMessage(role='user',content='p'),ChatMessage(role='assistant',content='good')], metadata=metadata or {'chosen':'good','rejected':'bad'})
     dataset = CleanedDataset(task_type=TaskType.PREFERENCE, total_records=1, train_records=[record], val_records=[])
     return TrlPeftBackend().train(TrainingJob(id='test', dataset_path='data',output_dir=str(tmp_path/'out'),recipe=recipe), dataset)
 
@@ -59,7 +62,15 @@ def test_grpo_error_does_not_fall_back_to_sft(tmp_path, runtime):
     def broken(**kw): raise RuntimeError('reward configuration missing')
     trl.GRPOTrainer = broken
     with pytest.raises(RuntimeError, match='reward configuration missing'):
-        run(tmp_path, TrainingObjective.GRPO)
+        run(tmp_path, TrainingObjective.GRPO, {'reward': 1.0})
+
+
+def test_grpo_trains_with_reference_reward(tmp_path, runtime):
+    seen, _ = runtime
+    run(tmp_path, TrainingObjective.GRPO, {'total_reward': 0.9})
+    assert seen['kind'] == 'grpo'
+    assert seen['reward_funcs'] == [reference_reward]
+    assert seen['train_dataset'][0]['reference'] == 'good'
 
 
 def test_no_gpu_fails_before_model_download(tmp_path, runtime, monkeypatch):

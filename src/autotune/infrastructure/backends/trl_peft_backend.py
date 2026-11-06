@@ -17,6 +17,7 @@ from autotune.core.domain.models import (
     TrainingProgress,
 )
 from autotune.core.ports.trainer import ProgressCallback, TrainingBackend
+from autotune.infrastructure.backends.grpo_rewards import grpo_rows, reference_reward
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,9 @@ class TrlPeftBackend(TrainingBackend):
                 trainer = GRPOTrainer(
                     model=model,
                     args=grpo_args,
+                    reward_funcs=[reference_reward],
                     train_dataset=hf_train,
+                    processing_class=tokenizer,
                 )
             except Exception as exc:
                 raise RuntimeError(f"GRPO initialization failed. Check the reward configuration and training dependencies: {exc}") from exc
@@ -227,6 +230,8 @@ def _progress_reporter(base: type, on_progress: ProgressCallback) -> Any:
 
 def training_rows(records: list[DatasetRecord], objective: TrainingObjective) -> list[dict[str, Any]]:
     """Translate records for the selected trainer without discarding DPO alternatives."""
+    if objective == TrainingObjective.GRPO:
+        return grpo_rows(records)
     if objective != TrainingObjective.DPO:
         return [{"messages": [m.model_dump() for m in record.messages]} for record in records]
     rows = []
