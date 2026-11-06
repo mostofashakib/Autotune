@@ -8,7 +8,9 @@ from autotune.infrastructure.sanitizers.dataset_loader import (
     MalformedExportError,
     load_preferences,
     load_rollouts,
+    load_sft,
 )
+from autotune.core.ports.sanitizer import IngestionError
 
 
 def _write_rollouts(path, rows):
@@ -89,3 +91,33 @@ def test_load_preferences_rejects_malformed_line(tmp_path):
     path.write_text('{"chosen": [], "rejected": []}\n')
     with pytest.raises(MalformedExportError):
         load_preferences(path)
+
+
+def test_load_sft_reads_csv_question_answer(tmp_path):
+    path = tmp_path / "heldout.csv"
+    path.write_text("question,answer\nWhat is 2+2?,4\n")
+    records = load_sft(path)
+    assert [(r.prompt, r.completion) for r in records] == [("What is 2+2?", "4")]
+
+
+def test_load_sft_reads_sharegpt_jsonl(tmp_path):
+    path = tmp_path / "heldout.jsonl"
+    row = {"conversations": [{"from": "human", "value": "Hi"}, {"from": "gpt", "value": "Hello"}]}
+    path.write_text(json.dumps(row) + "\n")
+    records = load_sft(path)
+    assert [(r.prompt, r.completion) for r in records] == [("Hi", "Hello")]
+
+
+def test_load_sft_keeps_reward_and_environment(tmp_path):
+    path = tmp_path / "sft.jsonl"
+    row = {"prompt": "Environment: shell\nList files", "completion": "ls", "reward": 0.5}
+    path.write_text(json.dumps(row) + "\n")
+    (record,) = load_sft(path)
+    assert record.env_name == "shell" and record.reward == 0.5
+
+
+def test_load_sft_rejects_raw_text(tmp_path):
+    path = tmp_path / "notes.csv"
+    path.write_text("text\nSome free text with no answer\n")
+    with pytest.raises(IngestionError, match="prompt and reference answer pairs"):
+        load_sft(path)

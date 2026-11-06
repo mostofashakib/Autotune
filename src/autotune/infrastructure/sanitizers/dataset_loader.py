@@ -5,7 +5,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from autotune.core.domain.models import PreferenceRecord, RolloutRecord, SFTRecord
+from autotune.core.domain.models import DatasetRecord, PreferenceRecord, RolloutRecord, SFTRecord
+from autotune.core.ports.sanitizer import IngestionError
+from autotune.infrastructure.sanitizers.sources import collect_sources
 
 
 class MalformedExportError(ValueError):
@@ -148,9 +150,9 @@ def load_sft(path_or_dir: Path) -> list[SFTRecord]:
             return []
     if path.suffix == ".parquet":
         return _sft_from_parquet(path)
-    if path.suffix == ".json":
+    if path.suffix == ".json" and _is_forge_json(path):
         return _sft_from_json(path)
-    return _sft_from_jsonl(path)
+    return _sft_from_universal_reader(path)
 
 
 def _sft_source(directory: Path) -> Path | None:
@@ -184,6 +186,16 @@ def _sft_from_parquet(path: Path) -> list[SFTRecord]:
         )
         for r in valid
     ]
+
+
+def _is_forge_json(path: Path) -> bool:
+    """Forge batch exports and task files are objects with `sft_items` or `tasks`."""
+    try:
+        with path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(data, dict) and ("sft_items" in data or "tasks" in data)
 
 
 def _sft_from_json(path: Path) -> list[SFTRecord]:
@@ -236,46 +248,38 @@ def _sft_from_json(path: Path) -> list[SFTRecord]:
     return [r for r in records if r.prompt and r.completion]
 
 
-def _sft_from_jsonl(path: Path) -> list[SFTRecord]:
-    records: list[SFTRecord] = []
-    with path.open(encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                if "messages" in obj and isinstance(obj["messages"], list):
-                    prompt = _prompt_of(obj["messages"])
-                    completion = _assistant_of(obj["messages"])
-                    records.append(
-                        SFTRecord(
-                            prompt=prompt,
-                            completion=completion,
-                            env_name=_environment_of(prompt),
-                            reward=float(obj.get("total_reward", 1.0)),
-                        )
-                    )
-                elif "prompt" in obj and "completion" in obj:
-                    records.append(
-                        SFTRecord(
-                            prompt=str(obj["prompt"]),
-                            completion=str(obj["completion"]),
-                            env_name=str(obj.get("env_name", "") or _environment_of(str(obj["prompt"]))),
-                            reward=float(obj.get("reward", 1.0)),
-                        )
-                    )
-                elif "chosen" in obj and isinstance(obj["chosen"], list):
-                    prompt = _prompt_of(obj["chosen"])
-                    completion = _assistant_of(obj["chosen"])
-                    records.append(
-                        SFTRecord(
-                            prompt=prompt,
-                            completion=completion,
-                            env_name=str(obj.get("env_name", "") or _environment_of(prompt)),
-                            reward=float(obj.get("chosen_reward", 1.0)),
-                        )
-                    )
-            except (json.JSONDecodeError, KeyError, ValueError) as exc:
-                raise MalformedExportError(f"sft jsonl {path} line {lineno} malformed: {exc}") from exc
-    return [r for r in records if r.prompt and r.completion]
+def sft_records(records: list[DatasetRecord]) -> list[SFTRecord]:
+    """One demonstration per record: first user message as prompt, assistant messages as completion."""
+    demonstrations = []
+    for record in records:
+        prompt = next((m.content for m in record.messages if m.role == "user"), "")
+        completion = "\n".join(m.content for m in record.messages if m.role == "assistant")
+        if not prompt or not completion:
+            continue
+        meta = record.metadata
+        demonstrations.append(
+            SFTRecord(
+                prompt=prompt,
+                completion=completion,
+                env_name=str(meta.get("env_name") or _environment_of(prompt)),
+                reward=_reward_of(meta),
+            )
+        )
+    return demonstrations
+
+
+def _reward_of(metadata: dict[str, Any]) -> float:
+    value = metadata.get("reward", metadata.get("total_reward", 1.0))
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise MalformedExportError(f"reward {value!r} is not a number") from exc
+
+
+def _sft_from_universal_reader(path: Path) -> list[SFTRecord]:
+    sources = collect_sources(path)
+    if sources.documents and not sources.records:
+        raise IngestionError(
+            f"{path.name} holds raw text only. Benchmark held-out data needs prompt and reference answer pairs."
+        )
+    return sft_records(sources.records)
