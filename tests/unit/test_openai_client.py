@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.request
 
 import pytest
 
 from autotune.core.domain.models import ModelEndpoint
-from autotune.infrastructure.evaluators.openai_client import ModelCallError, OpenAIChatClient
+from autotune.infrastructure.evaluators.openai_client import ModelCallError, OpenAIChatClient, default_transport
 
 ENDPOINT = ModelEndpoint(base_url="http://localhost:11434/v1/", model="gemma3:1b")
 
@@ -87,3 +88,22 @@ def test_an_empty_answer_that_finished_normally_is_returned_as_is():
     body = json.dumps({"choices": [{"finish_reason": "stop", "message": {"content": ""}}]}).encode()
 
     assert OpenAIChatClient(transport=Recorder(body)).complete(ENDPOINT, [{"role": "user", "content": "hi"}]) == ""
+
+
+def test_default_transport_returns_the_body_of_a_2xx(server_url):
+    request = urllib.request.Request(server_url, data=b"payload", headers={"X-Test": "h-"}, method="POST")
+    assert default_transport(request, 5) == b"h-payload"
+
+
+def test_a_rejected_request_reports_the_status_and_the_start_of_the_body(server_url):
+    endpoint = ModelEndpoint(base_url=server_url + "/unauthorized", model="m")
+    with pytest.raises(ModelCallError, match=r"did not answer: .*returned status 401: b'bad key: x") as caught:
+        OpenAIChatClient(transport=default_transport).complete(endpoint, [{"role": "user", "content": "hi"}])
+    assert f"m at {endpoint.base_url}" in str(caught.value)
+    assert "x" * 250 not in str(caught.value)
+
+
+def test_a_refused_connection_reports_the_failed_request():
+    endpoint = ModelEndpoint(base_url="http://127.0.0.1:1/v1", model="m")
+    with pytest.raises(ModelCallError, match=r"did not answer: HTTP request to http://127.0.0.1:1/v1/chat/completions failed"):
+        OpenAIChatClient(transport=default_transport).complete(endpoint, [{"role": "user", "content": "hi"}])

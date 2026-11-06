@@ -1,6 +1,7 @@
 """The one HTTP transport every infrastructure adapter shares."""
 from __future__ import annotations
 
+import http.client
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -19,5 +20,5 @@ def http_request(
             return response.status, response.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read()
-    except OSError as exc:
+    except (OSError, http.client.HTTPException) as exc:
         raise ConnectionError(f"HTTP request to {url} failed: {exc}") from exc
