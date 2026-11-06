@@ -169,7 +169,7 @@ def serve(
             gpu_memory_utilization=gpu_memory_utilization,
         )
         console.print(f"[bold green]✓ Server spawned at:[/] [underline]{endpoint.base_url}[/]")
-        console.print("API Base URL: [bold]http://127.0.0.1:{port}/v1[/]")
+        console.print(f"API Base URL: [bold]{endpoint.base_url}/v1[/]")
     except Exception as exc:
         console.print(f"[red]Failed to start vLLM serving engine:[/] {exc}")
         raise typer.Exit(code=1)

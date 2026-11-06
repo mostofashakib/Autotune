@@ -20,3 +20,16 @@ def test_the_api_command_runs_the_app_on_the_given_port(monkeypatch):
 
 def test_the_ui_command_is_gone():
     assert CliRunner().invoke(app, ["ui", "--help"]).exit_code != 0
+
+
+def test_serve_prints_the_real_api_url(monkeypatch):
+    from autotune.core.domain.models import ServingEndpoint
+    from autotune.presentation.cli import main
+    monkeypatch.setattr(main.VLLMServingProvider, "start", lambda self, **kw: ServingEndpoint(
+        model_name="m", base_url="http://127.0.0.1:9001", port=9001, backend="vllm", is_ready=False))
+
+    result = CliRunner().invoke(main.app, ["serve", "./ckpt", "--port", "9001"])
+
+    assert result.exit_code == 0, result.output
+    assert "http://127.0.0.1:9001/v1" in result.output
+    assert "{port}" not in result.output
