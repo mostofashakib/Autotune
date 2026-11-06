@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from autotune.core.domain.models import ModelEndpoint, SampleResult
+from autotune.settings import EndpointKeyMissing, endpoint_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -82,12 +83,11 @@ def _key_env(model: ModelEndpoint) -> dict[str, str]:
     It is never inherited from the caller's environment, so a real OpenAI key is
     never sent to whatever server `model.base_url` points at.
     """
-    if not model.api_key_env:
-        return {"OPENAI_API_KEY": KEYLESS_SERVER_KEY}
-    key = os.environ.get(model.api_key_env, "").strip()
-    if not key:
-        raise HarborError(f"{model.api_key_env} is not set, and {model.model} needs it as its API key")
-    return {"OPENAI_API_KEY": key}
+    try:
+        key = endpoint_api_key(model)
+    except EndpointKeyMissing as exc:
+        raise HarborError(str(exc)) from exc
+    return {"OPENAI_API_KEY": key or KEYLESS_SERVER_KEY}
 
 
 def _sample(result_path: Path) -> SampleResult:

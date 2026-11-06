@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -10,6 +9,7 @@ from typing import Any
 
 from autotune.core.domain.models import ModelEndpoint
 from autotune.infrastructure.http import http_request
+from autotune.settings import EndpointKeyMissing, endpoint_api_key
 
 # (request, timeout seconds) -> response body
 Transport = Callable[[urllib.request.Request, float], bytes]
@@ -54,12 +54,11 @@ class OpenAIChatClient:
 
 
 def _auth_header(endpoint: ModelEndpoint) -> dict[str, str]:
-    if not endpoint.api_key_env:
-        return {}
-    key = os.environ.get(endpoint.api_key_env, "").strip()
-    if not key:
-        raise ModelCallError(f"{endpoint.api_key_env} is not set, and {endpoint.model} needs it as its API key")
-    return {"Authorization": f"Bearer {key}"}
+    try:
+        key = endpoint_api_key(endpoint)
+    except EndpointKeyMissing as exc:
+        raise ModelCallError(str(exc)) from exc
+    return {"Authorization": f"Bearer {key}"} if key else {}
 
 
 def _content(raw: bytes, where: str) -> str:

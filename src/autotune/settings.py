@@ -108,3 +108,17 @@ def document_endpoint() -> ModelEndpoint:
         key = require_credential(Credential(key_env, "document generation"))
         os.environ[key_env] = key
     return ModelEndpoint(base_url=setting_value("AUTOTUNE_DOCUMENT_ENDPOINT", "http://localhost:11434/v1"), model=model, api_key_env=key_env)
+
+
+class EndpointKeyMissing(ValueError):
+    """An endpoint names an API key variable that is unset or empty."""
+
+
+def endpoint_api_key(endpoint: ModelEndpoint) -> str | None:
+    """The endpoint's API key, or None when it needs none (no `api_key_env`)."""
+    if not endpoint.api_key_env:
+        return None
+    key = os.environ.get(endpoint.api_key_env, "").strip()
+    if not key:
+        raise EndpointKeyMissing(f"{endpoint.api_key_env} is not set, and {endpoint.model} needs it as its API key")
+    return key

@@ -6,12 +6,15 @@ import os
 import pytest
 
 from autotune import settings
+from autotune.core.domain.models import ModelEndpoint
 from autotune.settings import (
     HF_TOKEN,
     PLACEHOLDER,
     RUNPOD_API_KEY,
     CredentialNotConfigured,
+    EndpointKeyMissing,
     credential_value,
+    endpoint_api_key,
     export_configured_credentials,
     is_configured,
     require_credential,
@@ -96,3 +99,25 @@ def test_nothing_outside_settings_reads_a_credential_from_the_environment():
         if f'environ.get("{credential.env_var}"' in p.read_text() or f'"{credential.env_var}", "' in p.read_text()
     ]
     assert offenders == []
+
+
+def _endpoint(api_key_env):
+    return ModelEndpoint(base_url="http://x/v1", model="m1", api_key_env=api_key_env)
+
+
+def test_endpoint_api_key_is_none_when_the_endpoint_names_no_variable():
+    assert endpoint_api_key(_endpoint(None)) is None
+
+
+def test_endpoint_api_key_returns_the_stripped_value(monkeypatch):
+    monkeypatch.setenv("ENDPOINT_KEY_TEST", "  secret \n")
+    assert endpoint_api_key(_endpoint("ENDPOINT_KEY_TEST")) == "secret"
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_endpoint_api_key_names_the_variable_when_it_is_empty(monkeypatch, value):
+    monkeypatch.delenv("ENDPOINT_KEY_TEST", raising=False)
+    if value is not None:
+        monkeypatch.setenv("ENDPOINT_KEY_TEST", value)
+    with pytest.raises(EndpointKeyMissing, match="ENDPOINT_KEY_TEST is not set, and m1 needs it as its API key"):
+        endpoint_api_key(_endpoint("ENDPOINT_KEY_TEST"))
