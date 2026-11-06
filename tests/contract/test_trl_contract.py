@@ -1,9 +1,14 @@
 """The keywords the training backend passes to TRL must exist in the installed TRL release."""
 import inspect
+import os
 
 import pytest
 
-trl = pytest.importorskip("trl")
+# CI sets AUTOTUNE_REQUIRE_TRL=1 so a broken training install fails instead of skipping every test.
+if os.environ.get("AUTOTUNE_REQUIRE_TRL") == "1":
+    import trl
+else:
+    trl = pytest.importorskip("trl")
 
 pytestmark = pytest.mark.contract
 
