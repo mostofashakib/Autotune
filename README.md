@@ -2,7 +2,7 @@
 
 **LLM Post-Training & Benchmarking Engine — Turn raw domain documents and datasets into fine-tuned models without deep learning infrastructure expertise.**
 
-Autotune gives developers, researchers, and domain specialists a complete post-training pipeline without requiring machine learning engineering experience. Upload your own documents (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.zip`) or structured data (`.csv`, `.tsv`, `.json`, `.jsonl`, `.parquet`). Autotune does the heavy lifting: extracting and chunking text, generating grounded training pairs, fitting model weights to your GPU's VRAM to prevent CUDA Out-Of-Memory errors, choosing optimal tuning recipes (SFT, DPO, or GRPO), running training, and benchmarking quality against the base model with pass@k evaluations.
+Autotune gives developers, researchers, and domain specialists a complete post-training pipeline without requiring machine learning engineering experience. Upload your own documents (`.pdf`, `.docx`, `.txt`, `.md`, `.html`, `.htm`), structured data (`.csv`, `.tsv`, `.json`, `.jsonl`, `.parquet`), or a `.zip` that mixes both. Autotune does the heavy lifting: extracting and chunking text, generating grounded training pairs, fitting model weights to your GPU's VRAM to prevent CUDA Out-Of-Memory errors, choosing optimal tuning recipes (SFT, DPO, or GRPO), running training, and benchmarking quality against the base model with pass@k evaluations.
 
 Works directly with [Forge](https://github.com/mostofashakib/Forge) for execution-verified synthetic datasets.
 
@@ -11,7 +11,7 @@ Works directly with [Forge](https://github.com/mostofashakib/Forge) for executio
 ## Why Autotune?
 
 - **Unstructured Document Ingestion:** Upload raw PDF, Word, HTML, text, Markdown files, or ZIP archives without manual preprocessing. Autotune extracts clean text, chunks by token counts, generates grounded training pairs through an LLM, filters duplicates and unsupported answers, and splits train/validation data cleanly by document.
-- **Automatic Format Detection:** Drop in CSV, JSONL, or Parquet files without converting schemas. Autotune detects conversational turns, prompt/response pairs, tool use, reward labels, and preference pairs (`prompt` + `chosen` + `rejected`) automatically.
+- **Automatic Format Detection:** Drop in CSV, TSV, JSON, JSONL, or Parquet files without converting schemas. Autotune detects conversational turns (including ShareGPT), prompt/response pairs under common column names, tool use, reward labels, and preference pairs (`prompt` + `chosen` + `rejected`) automatically. Files that hold raw text in a `text` column go through document ingestion instead.
 - **Hardware-Aware Model Catalog:**
   - Choose from 11 verified open-weight instruct models (0.5B to 14.7B parameters across Qwen, Llama, Gemma, Mistral, and Phi) or provide a custom Hugging Face ID.
   - **QLoRA (4-bit NF4):** Uses bitsandbytes 4-bit NormalFloat with estimated minima of 5GB to 19GB VRAM.
@@ -161,7 +161,11 @@ Both write `benchmark_results/benchmark_report.json`. A model that stops answeri
 
 ### Document Ingestion
 
-Install `uv sync --extra documents` for PDF (`pypdf`), Word (`python-docx`), and HTML (`beautifulsoup4`) extraction. Upload `.pdf`, `.docx`, `.txt`, `.md`, or `.html`, or ZIP a folder of documents. Scanned PDFs need OCR before upload. Archives are limited to 1,000 files, 20 MiB per document, and 100 MiB total uncompressed size.
+Install `uv sync --extra documents` for PDF (`pypdf`), Word (`python-docx`), and HTML (`beautifulsoup4`) extraction. Upload `.pdf`, `.docx`, `.txt`, `.md`, `.html`, or `.htm`, or ZIP a folder. A ZIP can mix documents with CSV, TSV, JSON, JSONL, and Parquet files, and every member ends up in one dataset. Scanned PDFs need OCR before upload, and encrypted PDFs need their password removed. Archives are limited to 1,000 files, 20 MiB per file, and 100 MiB total uncompressed size.
+
+Text files decode as UTF-8, UTF-16 with a byte order mark, or Latin-1, and HTML honors its `<meta charset>`. Word tables stay in reading order. Markdown loses its syntax and keeps its words, including code blocks.
+
+One bad file does not sink a ZIP. Autotune skips `.DS_Store` and `__MACOSX` entries, empty or corrupt files, and unsupported types, and lists each skip in the upload warnings. An archive with no usable file fails and names the reasons. Unsafe paths still reject the whole archive, and so does a mix of data kinds that cannot train together, such as preference pairs alongside chat.
 
 Set `AUTOTUNE_DOCUMENT_MODEL` to the exact model name on your generator server. `AUTOTUNE_DOCUMENT_ENDPOINT` defaults to `http://localhost:11434/v1` for local Ollama. For authenticated servers, set `AUTOTUNE_DOCUMENT_API_KEY_ENV` to the name of your API key variable. Unset keys and `mock_key` stop ingestion. Values load from the environment or `.env`.
 
@@ -169,7 +173,15 @@ Chunk settings are `AUTOTUNE_DOCUMENT_CHUNK_TOKENS=800`, `AUTOTUNE_DOCUMENT_OVER
 
 The generator produces Q&A and instruction/response pairs. Length bounds, normalized hashes, token-set similarity, lexical support, and an LLM grounding check filter them. These checks reduce unsupported answers but are not a factual guarantee. Each record retains its source filename and chunk ID. Splits keep documents separate. A single document uses chunk groups and reports a warning about overlapping text. Fewer than two surviving groups produces no held-out split and a warning.
 
-The UI displays documents read, chunks made, pairs generated, and pairs kept. `POST /api/dataset/upload` retains its synchronous response. Add `?background=true` to receive a job ID, then poll `GET /api/dataset/status/{job_id}`. Generated splits persist beside the upload as `.cleaned.json`, with a source hash to prevent stale reuse. Training reuses those exact records. The `.heldout.jsonl` file works with the existing dataset benchmark. Generator or grounding failures fail the whole upload.
+The UI displays documents read, chunks made, pairs generated, and pairs kept. `POST /api/dataset/upload` retains its synchronous response. Add `?background=true` to receive a job ID, then poll `GET /api/dataset/status/{job_id}`. Generated splits persist beside the upload as `.cleaned.json`, with a source hash to prevent stale reuse. Training reuses those exact records. The `.heldout.jsonl` file works with the existing dataset benchmark.
+
+Generator replies wrapped in Markdown code fences parse normally. A malformed reply gets one retry. After a second malformed reply, Autotune skips that chunk or pair, adds a warning, and counts it in `dropped_count`. The upload fails only when no record survives. An unreachable generator endpoint stops the upload, so a flaky server never produces a partial dataset.
+
+### Structured Data
+
+Each row maps to a conversation from the first schema it matches: a `messages` or ShareGPT `conversations` list, an Alpaca `instruction` with `output` (plus optional `input` as context), or any prompt column (`prompt`, `question`, `input`, `query`, `user`) paired with a response column (`completion`, `answer`, `output`, `response`, `assistant`). Roles such as `human`, `gpt`, `bot`, and `model` map to user and assistant, and content-part lists join into text. A JSON object that wraps its rows under `data`, `rows`, `records`, `examples`, `items`, or `train` unwraps automatically. CSV delimiters (comma, semicolon, tab, pipe) are detected.
+
+A file with no conversation rows but a `text`, `content`, `body`, or `document` column becomes document input, one document per row, and needs `AUTOTUNE_DOCUMENT_MODEL`. Malformed JSON lines and invalid rows are dropped, counted in `dropped_count`, and reported with line numbers. Unreadable files raise one ingestion error, and the API answers 422.
 
 ### Raw Preference Data
 
