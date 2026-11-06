@@ -11,7 +11,8 @@ from autotune.core.domain.models import (
     ComparisonReport, JobStatus, ModelEndpoint, QuantizationMethod, RunPodConfig, TrainingJob, TrainingObjective,
 )
 from autotune.infrastructure.models.hub_metadata import resolve_model
-from autotune.core.services.recipe_selector import AutoRecipeSelector
+from autotune.core.domain.training_settings import TrainingIntensity
+from autotune.core.services.training_planner import TrainingPlanner, TrainingRequest
 from autotune.defaults import (
     ANSWER_MAX_TOKENS, BENCHMARK_DIR, CHECKPOINT_DIR, HARBOR_JOBS_DIR, PASS_K,
     RUNPOD_DISK_GB, RUNPOD_GPU, RUNPOD_POD_NAME, SERVE_PORT,
@@ -25,10 +26,10 @@ from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark
 from autotune.infrastructure.evaluators.judge import LLMJudge
 from autotune.infrastructure.evaluators.openai_client import OpenAIChatClient
 from autotune.infrastructure.sanitizers.dataset_loader import load_sft
-from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
+from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.presentation.errors import EXPECTED_FAILURES
-from autotune.settings import export_configured_credentials
+from autotune.settings import HF_TOKEN, export_configured_credentials, require_credential
 
 app = typer.Typer(
     name="autotune",
@@ -57,21 +58,21 @@ app.add_typer(benchmark_app, name="benchmark")
 console = Console()
 
 
+def _planner() -> TrainingPlanner:
+    return TrainingPlanner(CudaProbe(), resolve_model)
+
+
 @app.command()
 def inspect(
     dataset_path: Path = typer.Argument(..., help="Path to dataset file (.csv, .jsonl, .parquet)"),
 ) -> None:
     """Inspect dataset and display auto-detected training recipe."""
-    sanitizer = AutoFormatSanitizer()
-    selector = AutoRecipeSelector()
-
     try:
-        dataset = sanitizer.sanitize(dataset_path)
-    except Exception as exc:
+        dataset = load_dataset(dataset_path)
+        recipe = _planner().recommend(dataset, TrainingRequest()).recipe
+    except EXPECTED_FAILURES as exc:
         console.print(f"[red]Error reading dataset:[/] {exc}")
-        raise typer.Exit(code=1)
-
-    recipe = selector.select_recipe(dataset, available_vram_gb=CudaProbe().available_vram_gb())
+        raise typer.Exit(code=1) from exc
 
     # Dataset Summary Table
     ds_table = Table(title="Dataset Analysis", show_header=True, header_style="bold magenta")
@@ -109,28 +110,25 @@ def train(
     base_model: Optional[str] = typer.Option(None, "--base-model", "-m", help="Override default base model"),
     quantization: Optional[str] = typer.Option(None, "--quantization", "-q", help="Override: 'lora_16bit' or 'qlora_4bit_nf4'"),
     objective: Optional[str] = typer.Option(None, "--objective", help="Override: 'sft', 'dpo', or 'grpo'"),
+    intensity: TrainingIntensity = typer.Option("balanced", "--intensity", help="'quick', 'balanced', or 'thorough'"),
 ) -> None:
     """Ingest data, auto-tune parameters, and train model."""
-    sanitizer = AutoFormatSanitizer()
-    selector = AutoRecipeSelector()
-
     console.print(f"[bold cyan]Autotune:[/] Analyzing dataset {dataset_path}...")
     try:
-        dataset = sanitizer.sanitize(dataset_path)
-    except Exception as exc:
-        console.print(f"[red]Error parsing dataset:[/] {exc}")
-        raise typer.Exit(code=1)
-
-    quant_enum = QuantizationMethod(quantization) if quantization else None
-    obj_enum = TrainingObjective(objective.lower()) if objective else None
-    recipe = selector.select_recipe(
-        dataset,
-        available_vram_gb=CudaProbe().available_vram_gb(),
-        forced_model=base_model,
-        model_spec=resolve_model(base_model) if base_model else None,
-        forced_quantization=quant_enum,
-        forced_objective=obj_enum,
-    )
+        request = TrainingRequest(
+            base_model=base_model,
+            objective=TrainingObjective(objective.lower()) if objective else None,
+            quantization=QuantizationMethod(quantization) if quantization else None,
+            intensity=intensity,
+        )
+        dataset = load_dataset(dataset_path)
+        plan = _planner().plan(dataset, request)
+        if plan.model.gated:
+            require_credential(HF_TOKEN)
+    except EXPECTED_FAILURES as exc:
+        console.print(f"[red]Error preparing training:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    recipe = plan.recipe
 
     console.print(f"[green]✓[/] Selected model: [bold]{recipe.base_model}[/]")
     console.print(f"[green]✓[/] Objective: [bold]{recipe.objective.value.upper()}[/]")
@@ -147,12 +145,12 @@ def train(
     console.print(f"[bold yellow]Starting training loop into {output_dir}...[/]")
     try:
         result = backend.train(job, dataset)
-    except Exception as exc:
+    except EXPECTED_FAILURES as exc:
         console.print(f"[red]Training error:[/] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
     if result.status == JobStatus.COMPLETED:
-        console.print(f"[bold green]✓ Training completed successfully![/]")
+        console.print("[bold green]✓ Training completed successfully![/]")
         console.print(f"Checkpoint saved to: [underline]{result.checkpoint_dir}[/]")
     else:
         console.print(f"[yellow]Training ended with status:[/] {result.status.value}")
@@ -177,9 +175,9 @@ def serve(
         )
         console.print(f"[bold green]✓ Server spawned at:[/] [underline]{endpoint.base_url}[/]")
         console.print(f"API Base URL: [bold]{endpoint.base_url}/v1[/]")
-    except Exception as exc:
+    except EXPECTED_FAILURES as exc:
         console.print(f"[red]Failed to start vLLM serving engine:[/] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
 
 BaseUrl = typer.Option(..., "--base-url", help="OpenAI-compatible URL serving the base model")
@@ -239,7 +237,7 @@ def _run_benchmark(mode, make_runner, k: int, output: Path, base: ModelEndpoint,
         report = run_comparison(mode, make_runner(), k, base, trained)
     except EXPECTED_FAILURES as exc:
         console.print(f"[red]Benchmark failed:[/] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
     path = write_report(report, output)
     _print_report(report)
     console.print(f"Report written to {path}")
@@ -286,9 +284,9 @@ def cloud_list_gpus(
                 f"${g.get('community_price', 0):.2f}",
             )
         console.print(table)
-    except Exception as exc:
+    except EXPECTED_FAILURES as exc:
         console.print(f"[red]Error fetching GPU types:[/] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
 
 @cloud_app.command("launch")
@@ -304,12 +302,12 @@ def cloud_launch(
     console.print(f"[bold cyan]Provisioning remote {gpu_type} pod on RunPod...[/]")
     try:
         instance = provider.create_instance(config)
-        console.print(f"[bold green]✓ Pod created successfully![/]")
+        console.print("[bold green]✓ Pod created successfully![/]")
         console.print(f"Pod ID: [bold]{instance.pod_id}[/]")
         console.print(f"Status: {instance.status}")
-    except Exception as exc:
+    except EXPECTED_FAILURES as exc:
         console.print(f"[red]Error provisioning pod:[/] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
 
 @cloud_app.command("status")
@@ -328,9 +326,9 @@ def cloud_status(
         console.print(f"Cost: ${inst.cost_per_hr:.2f}/hr")
         if inst.ssh_ip:
             console.print(f"SSH Target: ssh root@{inst.ssh_ip} -p {inst.ssh_port}")
-    except Exception as exc:
+    except EXPECTED_FAILURES as exc:
         console.print(f"[red]Error fetching status:[/] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
 
 @cloud_app.command("stop")
@@ -346,9 +344,9 @@ def cloud_stop(
             console.print(f"[bold green]✓ Pod {pod_id} successfully terminated.[/]")
         else:
             console.print(f"[yellow]Could not terminate pod {pod_id}.[/]")
-    except Exception as exc:
+    except EXPECTED_FAILURES as exc:
         console.print(f"[red]Error terminating pod:[/] {exc}")
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from exc
 
 
 @app.command()

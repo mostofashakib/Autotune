@@ -58,6 +58,10 @@ packages = ["src/autotune"]
 [tool.ruff.lint]
 select = ["F", "E9", "B", "BLE", "C90", "PLR0912", "PLR0913", "PLR0915", "SIM", "S110", "ERA"]
 
+[tool.ruff.lint.flake8-bugbear]
+# Typer declares every CLI argument as a call in the parameter default.
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
 [tool.ruff.lint.mccabe]
 max-complexity = 10
 
@@ -74,6 +78,7 @@ ignore-docstrings = true
 "src/autotune/core/domain/model_catalog.py" = ["PLR0913"]
 "src/autotune/core/ports/serving.py" = ["F401"]
 "src/autotune/core/services/recipe_selector.py" = ["PLR0913"]
+"src/autotune/presentation/cli/main.py" = ["PLR0913"]
 "src/autotune/infrastructure/backends/trl_peft_backend.py" = ["C901", "PLR0912", "PLR0915"]
 "src/autotune/infrastructure/cloud/runpod_provider.py" = ["BLE001"]
 "src/autotune/infrastructure/evaluators/comparison.py" = ["B905"]
@@ -83,7 +88,6 @@ ignore-docstrings = true
 "src/autotune/infrastructure/evaluators/report.py" = ["BLE001"]
 "src/autotune/infrastructure/sanitizers/document_ingestor.py" = ["C901"]
 "src/autotune/infrastructure/serving/vllm_provider.py" = ["BLE001"]
-"src/autotune/presentation/cli/main.py" = ["B008", "B904", "BLE001", "F541", "PLR0913"]
 "tests/unit/test_document_api.py" = ["F401"]
 "tests/unit/test_grpo.py" = ["F401"]
 "tests/unit/test_recipe_selector.py" = ["F401"]
