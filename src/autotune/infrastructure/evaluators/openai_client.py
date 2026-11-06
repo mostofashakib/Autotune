@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from autotune.core.domain.models import ModelEndpoint
+from autotune.infrastructure.http import http_request
 
 # (request, timeout seconds) -> response body
 Transport = Callable[[urllib.request.Request, float], bytes]
@@ -18,14 +19,19 @@ class ModelCallError(RuntimeError):
     """A model endpoint could not produce an answer."""
 
 
-def _urlopen(request: urllib.request.Request, timeout: float) -> bytes:
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read()
+def default_transport(request: urllib.request.Request, timeout: float) -> bytes:
+    """The reply body of a 2xx answer. Any other status raises ConnectionError."""
+    status, body = http_request(
+        request.get_method(), request.full_url, headers=dict(request.header_items()), body=request.data, timeout=timeout,
+    )
+    if not 200 <= status < 300:
+        raise ConnectionError(f"HTTP request to {request.full_url} returned status {status}: {body[:200]!r}")
+    return body
 
 
 class OpenAIChatClient:
     def __init__(self, transport: Transport | None = None, timeout_s: float = 120.0) -> None:
-        self._transport = transport or _urlopen
+        self._transport = transport or default_transport
         self._timeout_s = timeout_s
 
     def complete(

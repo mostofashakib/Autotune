@@ -6,7 +6,7 @@ import re
 import urllib.request
 from autotune.core.domain.model_catalog import ModelSpec, get_model, memory_baseline
 from autotune.core.domain.models import QuantizationMethod
-from autotune.infrastructure.evaluators.openai_client import Transport, _urlopen
+from autotune.infrastructure.evaluators.openai_client import Transport, default_transport
 from autotune.settings import HF_TOKEN, credential_value, is_configured
 
 
@@ -17,7 +17,7 @@ def resolve_model(hf_id: str, transport: Transport | None = None) -> ModelSpec:
         return known
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", hf_id) or '..' in hf_id:
         raise ValueError("Use a Hugging Face ID in owner/model form")
-    transport = transport or _urlopen
+    transport = transport or default_transport
     token = credential_value(HF_TOKEN)
     headers = {"Authorization": f"Bearer {token}"} if is_configured(token) else {}
 

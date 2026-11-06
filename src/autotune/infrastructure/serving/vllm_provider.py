@@ -4,17 +4,15 @@ from __future__ import annotations
 import json
 import logging
 import os
-import signal
 import subprocess
 import tempfile
-import time
-import urllib.error
-import urllib.request
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
 from autotune.core.domain.models import ServingEndpoint, ServingStatus
 from autotune.core.ports.serving import ServingProvider
+from autotune.infrastructure.http import http_request
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +32,7 @@ class VLLMServingProvider(ServingProvider):
             request_fn: Optional dependency-injected HTTP client function for testability.
             process_runner: Optional dependency-injected subprocess runner for testability.
         """
-        self._request_fn = request_fn or self._default_http_request
+        self._request_fn = request_fn or partial(http_request, timeout=10.0)
         self._process_runner = process_runner or subprocess.Popen
         self._active_process: subprocess.Popen[Any] | None = None
         self._current_endpoint: ServingEndpoint | None = None
@@ -202,21 +200,3 @@ class VLLMServingProvider(ServingProvider):
         if choices and "text" in choices[0]:
             return choices[0]["text"]
         return ""
-
-    @staticmethod
-    def _default_http_request(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes | None,
-        timeout: float = 10.0,
-    ) -> tuple[int, bytes]:
-        """Built-in HTTP requester using standard library urllib."""
-        req = urllib.request.Request(url, data=body, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                return response.status, response.read()
-        except urllib.error.HTTPError as e:
-            return e.code, e.read()
-        except Exception as e:
-            raise ConnectionError(f"HTTP request to {url} failed: {e}") from e

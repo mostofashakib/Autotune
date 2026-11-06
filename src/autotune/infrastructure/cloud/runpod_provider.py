@@ -3,12 +3,12 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.error
-import urllib.request
+from functools import partial
 from typing import Any, Callable
 
 from autotune.core.domain.models import RunPodConfig, RunPodInstance
 from autotune.core.ports.cloud import CloudComputeProvider
+from autotune.infrastructure.http import http_request
 from autotune.settings import RUNPOD_API_KEY, require_credential
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class RunPodCloudProvider(CloudComputeProvider):
             request_fn: Optional injected HTTP client function for testability.
         """
         self._key_override = api_key
-        self._request_fn = request_fn or self._default_graphql_request
+        self._request_fn = request_fn or partial(http_request, timeout=15.0)
 
     def create_instance(self, config: RunPodConfig) -> RunPodInstance:
         """
@@ -230,21 +230,3 @@ class RunPodCloudProvider(CloudComputeProvider):
         if payload.get("errors"):
             raise RuntimeError(f"RunPod GraphQL error: {payload['errors']}")
         return payload
-
-    @staticmethod
-    def _default_graphql_request(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes | None,
-        timeout: float = 15.0,
-    ) -> tuple[int, bytes]:
-        """Default HTTP requester using urllib."""
-        req = urllib.request.Request(url, data=body, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                return response.status, response.read()
-        except urllib.error.HTTPError as e:
-            return e.code, e.read()
-        except Exception as e:
-            raise ConnectionError(f"HTTP request to {url} failed: {e}") from e
