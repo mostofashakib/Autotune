@@ -560,6 +560,26 @@ export interface components {
             /** Purpose */
             purpose: string;
         };
+        /**
+         * EnvQualityMetrics
+         * @description Environment quality diagnostics.
+         */
+        EnvQualityMetrics: {
+            /** Action Diversity */
+            action_diversity: number;
+            /** Dead End Rate */
+            dead_end_rate: number;
+            /** Env Name */
+            env_name: string;
+            /** Num Episodes */
+            num_episodes: number;
+            /** Num Steps */
+            num_steps: number;
+            /** Reward Density */
+            reward_density: number;
+            /** State Coverage Score */
+            state_coverage_score: number | null;
+        };
         /** GgufExport */
         GgufExport: {
             /** Checkpoint Dir */
@@ -1067,6 +1087,8 @@ export interface components {
         UploadedDataset: {
             /** Dropped Count */
             dropped_count: number;
+            /** Environment Quality */
+            environment_quality?: components["schemas"]["EnvQualityMetrics"][];
             /** File Name */
             file_name: string;
             /** File Path */

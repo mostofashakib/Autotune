@@ -71,6 +71,7 @@ def inspect_upload(
             "prompt": r.prompt or (r.messages[0].content if r.messages else ""),
             "completion": r.completions[0] if r.completions else (r.messages[-1].content if len(r.messages) > 1 else ""),
         } for r in cleaned.train_records[:3]],
+        "environment_quality": [m.model_dump(mode="json") for m in cleaned.environment_quality],
     }
 
 

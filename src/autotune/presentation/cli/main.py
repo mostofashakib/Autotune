@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from autotune.core.domain.models import (
-    ComparisonReport, JobStatus, ModelEndpoint, QuantizationMethod, RunPodConfig, TrainingJob, TrainingObjective,
+    ComparisonReport, EnvQualityMetrics, JobStatus, ModelEndpoint, QuantizationMethod, RunPodConfig, TrainingJob, TrainingObjective,
 )
 from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.core.domain.training_settings import TrainingIntensity
@@ -25,6 +25,7 @@ from autotune.infrastructure.evaluators.dataset_benchmark import DatasetBenchmar
 from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark
 from autotune.infrastructure.evaluators.judge import LLMJudge
 from autotune.infrastructure.evaluators.openai_client import OpenAIChatClient
+from autotune.infrastructure.evaluators.report import write_env_quality
 from autotune.infrastructure.sanitizers.dataset_loader import load_sft
 from autotune.infrastructure.storage.local_checkpoints import LocalCheckpointStorage
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
@@ -63,6 +64,17 @@ def _planner() -> TrainingPlanner:
     return TrainingPlanner(CudaProbe(), resolve_model)
 
 
+def _environment_quality_table(metrics: list[EnvQualityMetrics]) -> Table:
+    table = Table(title="Environment Quality", show_header=True, header_style="bold cyan")
+    for column in ("Environment", "Episodes", "Steps", "Reward density", "Dead-end rate", "Action diversity", "State coverage"):
+        table.add_column(column)
+    for m in metrics:
+        coverage = "n/a" if m.state_coverage_score is None else f"{m.state_coverage_score:.2f}"
+        table.add_row(m.env_name, str(m.num_episodes), str(m.num_steps), f"{m.reward_density:.2f}",
+                      f"{m.dead_end_rate:.2f}", f"{m.action_diversity:.2f}", coverage)
+    return table
+
+
 @app.command()
 def inspect(
     dataset_path: Path = typer.Argument(..., help="Path to dataset file (.csv, .jsonl, .parquet)"),
@@ -89,6 +101,11 @@ def inspect(
     ds_table.add_row("Validation Split", str(len(dataset.val_records)))
     ds_table.add_row("Dropped / Corrupt", str(dataset.dropped_count))
     console.print(ds_table)
+
+    if dataset.environment_quality:
+        console.print(_environment_quality_table(dataset.environment_quality))
+        files = write_env_quality(dataset.environment_quality, dataset_path.parent)
+        console.print("Wrote " + ", ".join(str(f) for f in files))
 
     # Auto-Recipe Table
     r_table = Table(title="Auto-Selected Training Recipe", show_header=True, header_style="bold green")

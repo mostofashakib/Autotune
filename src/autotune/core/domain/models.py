@@ -48,6 +48,17 @@ class DatasetRecord(BaseModel):
     rewards: list[float] = Field(default_factory=list)
 
 
+class EnvQualityMetrics(BaseModel):
+    """Environment quality diagnostics."""
+    env_name: str
+    state_coverage_score: float | None
+    reward_density: float
+    dead_end_rate: float
+    action_diversity: float
+    num_episodes: int
+    num_steps: int
+
+
 class CleanedDataset(BaseModel):
     task_type: TaskType
     total_records: int
@@ -55,6 +66,7 @@ class CleanedDataset(BaseModel):
     val_records: list[DatasetRecord]
     dropped_count: int = 0
     warnings: list[str] = Field(default_factory=list)
+    environment_quality: list[EnvQualityMetrics] = Field(default_factory=list)
 
 
 class Recipe(BaseModel):
@@ -263,15 +275,3 @@ class SFTRecord(BaseModel):
     reward: float = 1.0
     passed: bool = True
     behavior_model: str = ""
-
-
-class EnvQualityMetrics(BaseModel):
-    """Environment quality diagnostics."""
-    env_name: str
-    state_coverage_score: float
-    reward_density: float
-    dead_end_rate: float
-    action_diversity: float
-    num_episodes: int
-    num_steps: int
-

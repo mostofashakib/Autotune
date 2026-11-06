@@ -1,14 +1,12 @@
-"""Environment quality diagnostics and metrics calculation."""
+"""Environment quality diagnostics from a Forge export (trajectories and rollouts)."""
 from __future__ import annotations
 
-import json
-import logging
-from pathlib import Path
+from collections import defaultdict
 from typing import Any, Protocol
 
-from autotune.core.domain.models import EnvQualityMetrics
+from autotune.core.domain.models import EnvQualityMetrics, RolloutRecord
 
-logger = logging.getLogger(__name__)
+UNKNOWN_ENV = "unknown"
 
 
 class StateSchemaCoverageProvider(Protocol):
@@ -21,77 +19,63 @@ class StateSchemaCoverageProvider(Protocol):
 
 
 def compute_env_quality(
-    episode_dir: Path,
-    manifest: StateSchemaCoverageProvider,
+    trajectories: list[dict[str, Any]],
+    rollouts: list[RolloutRecord],
+    manifest: StateSchemaCoverageProvider | None = None,
+) -> list[EnvQualityMetrics]:
+    """One entry per environment, sorted by name.
+
+    Steps come from `trajectories` (reward density, action diversity, step count) and
+    dead ends from `rollouts`. A metric whose source is missing for an environment is 0.0.
+    State coverage needs a manifest and per-step `state_after`, otherwise it is None.
+    """
+    episodes_by_env: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for episode in trajectories:
+        episodes_by_env[str(episode.get("env") or UNKNOWN_ENV)].append(episode)
+    rollouts_by_env: dict[str, list[RolloutRecord]] = defaultdict(list)
+    for rollout in rollouts:
+        rollouts_by_env[rollout.env_name or UNKNOWN_ENV].append(rollout)
+    return [
+        _metrics_for(name, episodes_by_env[name], rollouts_by_env[name], manifest)
+        for name in sorted(episodes_by_env.keys() | rollouts_by_env.keys())
+    ]
+
+
+def _metrics_for(
+    env_name: str,
+    episodes: list[dict[str, Any]],
+    rollouts: list[RolloutRecord],
+    manifest: StateSchemaCoverageProvider | None,
 ) -> EnvQualityMetrics:
-    """Compute quality metrics from JSONL episode files in episode_dir."""
-    jsonl_files = list(episode_dir.rglob("*.jsonl"))
-
-    total_steps = 0
-    steps_with_reward = 0
-    coverage_sum = 0.0
-    dead_end_episodes = 0
-    all_endpoints: list[str] = []
-    unique_endpoints: set[str] = set()
-    num_episodes = 0
-
-    for jsonl_path in jsonl_files:
-        try:
-            lines = jsonl_path.read_text().splitlines()
-        except Exception as exc:
-            logger.warning("Could not read %s: %s", jsonl_path, exc)
-            continue
-
-        episode_counted = False
-        for line in lines:
-            if not line.strip():
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-
-            if rec.get("type") == "episode_summary":
-                if not episode_counted:
-                    num_episodes += 1
-                    episode_counted = True
-                if rec.get("termination_reason") == "dead_end":
-                    dead_end_episodes += 1
-                continue
-
-            total_steps += 1
-            reward = rec.get("reward", 0.0)
-            if reward > 0:
-                steps_with_reward += 1
-
-            state_after = rec.get("state_after", {})
-            coverage_sum += manifest.coverage_score(state_after)
-
-            endpoint = rec.get("action", {}).get("endpoint", "")
-            if endpoint:
-                all_endpoints.append(endpoint)
-                unique_endpoints.add(endpoint)
-
-        if not episode_counted and lines:
-            num_episodes += 1
-
-    if total_steps == 0:
-        return EnvQualityMetrics(
-            env_name=manifest.env_name,
-            state_coverage_score=0.0,
-            reward_density=0.0,
-            dead_end_rate=0.0,
-            action_diversity=0.0,
-            num_episodes=num_episodes,
-            num_steps=0,
-        )
-
+    steps = [step for episode in episodes for step in episode.get("steps", [])]
+    endpoints = [endpoint for step in steps if (endpoint := _endpoint(step))]
+    rewarded = sum(1 for step in steps if step.get("reward", 0.0) > 0)
+    dead_ends = sum(1 for rollout in rollouts if rollout.termination_reason == "dead_end")
     return EnvQualityMetrics(
-        env_name=manifest.env_name,
-        state_coverage_score=coverage_sum / total_steps,
-        reward_density=steps_with_reward / total_steps,
-        dead_end_rate=dead_end_episodes / max(num_episodes, 1),
-        action_diversity=len(unique_endpoints) / len(all_endpoints) if all_endpoints else 0.0,
-        num_episodes=num_episodes,
-        num_steps=total_steps,
+        env_name=env_name,
+        state_coverage_score=_coverage(steps, manifest),
+        reward_density=rewarded / len(steps) if steps else 0.0,
+        dead_end_rate=dead_ends / len(rollouts) if rollouts else 0.0,
+        action_diversity=len(set(endpoints)) / len(endpoints) if endpoints else 0.0,
+        num_episodes=_episode_count(episodes, rollouts),
+        num_steps=len(steps),
     )
+
+
+def _endpoint(step: dict[str, Any]) -> str | None:
+    action = step.get("action")
+    return action.get("endpoint") if isinstance(action, dict) else None
+
+
+def _coverage(steps: list[dict[str, Any]], manifest: StateSchemaCoverageProvider | None) -> float | None:
+    states = [step["state_after"] for step in steps if isinstance(step.get("state_after"), dict)]
+    if manifest is None or not states:
+        return None
+    return sum(manifest.coverage_score(state) for state in states) / len(states)
+
+
+def _episode_count(episodes: list[dict[str, Any]], rollouts: list[RolloutRecord]) -> int:
+    """Distinct episodes from trajectories, or from rollouts when the environment has no trajectories."""
+    if episodes:
+        return len({episode.get("episode_id", index) for index, episode in enumerate(episodes)})
+    return len({rollout.episode_id for rollout in rollouts})

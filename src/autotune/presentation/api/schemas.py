@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from autotune.core.domain.models import BenchmarkMode, ComparisonReport, Recipe
+from autotune.core.domain.models import BenchmarkMode, ComparisonReport, EnvQualityMetrics, Recipe
 from autotune.core.domain.training_settings import TrainingIntensity
 
 
@@ -72,6 +72,7 @@ class UploadedDataset(BaseModel):
     progress: dict[str, int]
     presets: Presets
     preview: list[PreviewRow]
+    environment_quality: list[EnvQualityMetrics] = Field(default_factory=list)
 
 
 class IngestionAccepted(BaseModel):

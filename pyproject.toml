@@ -82,15 +82,12 @@ ignore-docstrings = true
 "src/autotune/infrastructure/backends/trl_peft_backend.py" = ["C901", "PLR0912", "PLR0915"]
 "src/autotune/infrastructure/cloud/runpod_provider.py" = ["BLE001"]
 "src/autotune/infrastructure/evaluators/comparison.py" = ["B905"]
-"src/autotune/infrastructure/evaluators/env_quality.py" = ["BLE001", "C901"]
 "src/autotune/infrastructure/evaluators/harbor_benchmark.py" = ["PLR0913"]
-"src/autotune/infrastructure/evaluators/report.py" = ["BLE001"]
 "src/autotune/infrastructure/sanitizers/document_ingestor.py" = ["C901"]
 "src/autotune/infrastructure/serving/vllm_provider.py" = ["BLE001"]
 "tests/unit/test_document_api.py" = ["F401"]
 "tests/unit/test_grpo.py" = ["F401"]
 "tests/unit/test_recipe_selector.py" = ["F401"]
-"tests/unit/test_report.py" = ["F401"]
 
 [tool.importlinter]
 root_package = "autotune"

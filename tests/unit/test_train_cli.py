@@ -151,3 +151,20 @@ def test_cli_serve_prints_a_spawn_failure(cli, tmp_path, monkeypatch):
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
     assert "Failed to start vLLM serving engine" in result.output
+
+
+def test_cli_inspect_prints_and_writes_environment_quality(cli, tmp_path):
+    archive = tmp_path / "bundle.zip"
+    steps = [{"step_index": 0, "action": {"endpoint": "/a"}, "reward": 1.0, "terminated": True, "truncated": False}]
+    trajectory = json.dumps({"episode_id": "e1", "env": "mail", "task": "t", "seed": 1, "steps": steps})
+    sft = "".join(json.dumps({"prompt": f"q{i}", "completion": f"a{i}"}) + "\n" for i in range(12))
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("trajectories.jsonl", trajectory + "\n")
+        zf.writestr("sft_pairs.jsonl", sft)
+
+    result = cli.invoke(main.app, ["inspect", str(archive)])
+
+    assert result.exit_code == 0, result.output
+    assert "Environment Quality" in result.output
+    assert json.loads((tmp_path / "env_quality.json").read_text())[0]["env_name"] == "mail"
+    assert (tmp_path / "env_quality.csv").exists()

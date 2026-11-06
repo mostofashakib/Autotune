@@ -440,6 +440,57 @@
         "title": "CredentialStatus",
         "type": "object"
       },
+      "EnvQualityMetrics": {
+        "description": "Environment quality diagnostics.",
+        "properties": {
+          "action_diversity": {
+            "title": "Action Diversity",
+            "type": "number"
+          },
+          "dead_end_rate": {
+            "title": "Dead End Rate",
+            "type": "number"
+          },
+          "env_name": {
+            "title": "Env Name",
+            "type": "string"
+          },
+          "num_episodes": {
+            "title": "Num Episodes",
+            "type": "integer"
+          },
+          "num_steps": {
+            "title": "Num Steps",
+            "type": "integer"
+          },
+          "reward_density": {
+            "title": "Reward Density",
+            "type": "number"
+          },
+          "state_coverage_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State Coverage Score"
+          }
+        },
+        "required": [
+          "env_name",
+          "state_coverage_score",
+          "reward_density",
+          "dead_end_rate",
+          "action_diversity",
+          "num_episodes",
+          "num_steps"
+        ],
+        "title": "EnvQualityMetrics",
+        "type": "object"
+      },
       "GgufExport": {
         "properties": {
           "checkpoint_dir": {
@@ -1852,6 +1903,13 @@
           "dropped_count": {
             "title": "Dropped Count",
             "type": "integer"
+          },
+          "environment_quality": {
+            "items": {
+              "$ref": "#/components/schemas/EnvQualityMetrics"
+            },
+            "title": "Environment Quality",
+            "type": "array"
           },
           "file_name": {
             "title": "File Name",

@@ -148,6 +148,26 @@ export default function TrainingPage() {
                   <div><span>Train / val</span><strong>{dataset.train_records} / {dataset.val_records}</strong></div>
                   <div><span>Dropped</span><strong>{dataset.dropped_count}</strong></div>
                 </div>
+                {dataset.environment_quality?.length ? (
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead><tr><th>Environment</th><th>Episodes</th><th>Steps</th><th>Reward density</th><th>Dead ends</th><th>Action diversity</th><th>State coverage</th></tr></thead>
+                      <tbody>
+                        {dataset.environment_quality.map((env) => (
+                          <tr key={env.env_name}>
+                            <td className="mono">{env.env_name}</td>
+                            <td className="mono">{env.num_episodes}</td>
+                            <td className="mono">{env.num_steps}</td>
+                            <td className="mono">{env.reward_density.toFixed(2)}</td>
+                            <td className="mono">{env.dead_end_rate.toFixed(2)}</td>
+                            <td className="mono">{env.action_diversity.toFixed(2)}</td>
+                            <td className="mono">{env.state_coverage_score?.toFixed(2) ?? "n/a"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
                 {dataset.preview.map((row, index) => (
                   <div key={index} className="answer">
                     <h3>Prompt</h3>

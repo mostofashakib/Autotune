@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from autotune.core.domain.limits import MAX_FILE_BYTES, MAX_UPLOAD_BYTES
-from autotune.core.domain.models import CleanedDataset, DatasetRecord, TaskType
+from autotune.core.domain.models import CleanedDataset, DatasetRecord, EnvQualityMetrics, TaskType
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.infrastructure.sanitizers.document_text import DOCUMENT_SUFFIXES, extract_text
+from autotune.infrastructure.sanitizers.export_quality import environment_quality, is_trajectories
 from autotune.infrastructure.sanitizers.format_normalizer import STRUCTURED_SUFFIXES, normalize_file, tail_split
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class Sources:
     documents: list[tuple[str, str]] = field(default_factory=list)
     dropped: int = 0
     warnings: list[str] = field(default_factory=list)
+    environment_quality: list[EnvQualityMetrics] = field(default_factory=list)
 
 
 def collect_sources(path: Path) -> Sources:
@@ -39,7 +41,8 @@ def collect_sources(path: Path) -> Sources:
     if suffix != ".zip":
         if path.stat().st_size > MAX_DOCUMENT_BYTES:
             raise IngestionError(f"{path.name} exceeds the 20 MiB per-file limit")
-        return _merge([_read_file(path.name, path.read_bytes(), in_archive=False)], [])
+        data = path.read_bytes()
+        return _merge([_read_file(path.name, data, in_archive=False)], [], [(path.name, data)])
     members, warnings = _archive_members(path)
     parts = []
     for name, data in members:
@@ -49,7 +52,7 @@ def collect_sources(path: Path) -> Sources:
             warnings.append(f"Skipped archive member: {exc}")
     if not parts:
         raise IngestionError(f"No usable files in {path.name}. " + " ".join(warnings))
-    return _merge(parts, warnings)
+    return _merge(parts, warnings, members)
 
 
 def _archive_members(path: Path) -> tuple[list[tuple[str, bytes]], list[str]]:
@@ -85,6 +88,8 @@ def _is_system_file(name: PurePosixPath) -> bool:
 
 
 def _read_file(name: str, data: bytes, *, in_archive: bool) -> Sources:
+    if is_trajectories(name):
+        return Sources()  # Step logs have no conversation schema. They only feed environment quality.
     if PurePosixPath(name).suffix.lower() in DOCUMENT_SUFFIXES:
         return Sources(documents=[(name, extract_text(name, data))])
     parsed = normalize_file(name, data)
@@ -94,16 +99,18 @@ def _read_file(name: str, data: bytes, *, in_archive: bool) -> Sources:
     return Sources(parsed.task_type if records else None, records, parsed.texts, parsed.dropped, parsed.warnings)
 
 
-def _merge(parts: list[Sources], warnings: list[str]) -> Sources:
+def _merge(parts: list[Sources], warnings: list[str], files: list[tuple[str, bytes]]) -> Sources:
     types = {p.task_type for p in parts if p.task_type is not None}
     if any(p.documents for p in parts):
         types.add(TaskType.CHAT)
+    quality, quality_warnings = environment_quality(files)
     return Sources(
         task_type=_combined_type(types),
         records=[r for p in parts for r in p.records],
         documents=[d for p in parts for d in p.documents],
         dropped=sum(p.dropped for p in parts),
-        warnings=[*warnings, *(w for p in parts for w in p.warnings)],
+        warnings=[*warnings, *(w for p in parts for w in p.warnings), *quality_warnings],
+        environment_quality=quality,
     )
 
 
@@ -122,7 +129,8 @@ def assemble_dataset(sources: Sources, generated: list[DatasetRecord], dropped: 
     """One CleanedDataset from every surviving record, split by source file when sources are known."""
     records = [*sources.records, *generated]
     if not records:
-        raise IngestionError("No usable training records survived. " + " ".join([*sources.warnings, *warnings]))
+        hint = ["The upload holds environment quality only. Add training data such as sft_pairs.jsonl."] if sources.environment_quality else []
+        raise IngestionError("No usable training records survived. " + " ".join([*hint, *sources.warnings, *warnings]))
     warnings = [*sources.warnings, *warnings]
     if all("source_file" in r.metadata for r in records):
         train, val, split_warnings = _split_by_source(records, val_split_ratio)
@@ -130,7 +138,8 @@ def assemble_dataset(sources: Sources, generated: list[DatasetRecord], dropped: 
     else:
         train, val = tail_split(records, val_split_ratio)
     return CleanedDataset(task_type=sources.task_type or TaskType.CHAT, total_records=len(records), train_records=train,
-                          val_records=val, dropped_count=sources.dropped + dropped, warnings=warnings)
+                          val_records=val, dropped_count=sources.dropped + dropped, warnings=warnings,
+                          environment_quality=sources.environment_quality)
 
 
 def _split_by_source(records: list[DatasetRecord], ratio: float) -> tuple[list[DatasetRecord], list[DatasetRecord], list[str]]:

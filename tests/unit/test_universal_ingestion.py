@@ -184,3 +184,65 @@ def test_markdown_markup_is_stripped():
               "> Quoted `inline` code\n\n- item one\n\n---\n\n```python\nprint(1)\n```\n")
     assert extract_text("notes.md", source.encode()) == (
         "Title\n\nSome bold and italic text with a link and a chart.\nQuoted inline code\n\n- item one\n\nprint(1)")
+
+
+# Forge export bundles report environment quality.
+
+def forge_trajectories():
+    episodes = [
+        {"episode_id": "e1", "env": "mail", "task": "t", "seed": 1, "steps": [
+            {"step_index": 0, "action": {"endpoint": "/a"}, "reward": 0.0, "terminated": False, "truncated": False},
+            {"step_index": 1, "action": {"endpoint": "/a"}, "reward": 1.0, "terminated": True, "truncated": False}]},
+        {"episode_id": "e2", "env": "mail", "task": "t", "seed": 2, "steps": [
+            {"step_index": 0, "action": {"endpoint": "/b"}, "reward": 0.0, "terminated": False, "truncated": False},
+            {"step_index": 1, "action": {"endpoint": "/c"}, "reward": 0.0, "terminated": True, "truncated": False}]},
+    ]
+    return "".join(json.dumps(e) + "\n" for e in episodes)
+
+
+def forge_rollouts():
+    import pandas as pd
+    rows = [
+        {"episode_id": "e1", "env_name": "mail", "task_name": "t", "prompt": "p", "completion": "c", "total_reward": 1.0,
+         "passed": True, "termination_reason": "success", "per_step_rewards": [0.0, 1.0]},
+        {"episode_id": "e2", "env_name": "mail", "task_name": "t", "prompt": "p", "completion": "c", "total_reward": 0.0,
+         "passed": False, "termination_reason": "dead_end", "per_step_rewards": [0.0, 0.0]},
+    ]
+    buffer = io.BytesIO()
+    pd.DataFrame(rows).to_parquet(buffer)
+    return buffer.getvalue()
+
+
+SFT_ROWS = '{"prompt": "a", "completion": "b"}\n{"prompt": "c", "completion": "d"}\n'
+
+
+def test_forge_bundle_upload_reports_environment_quality(tmp_path):
+    from autotune.infrastructure.sanitizers.sources import collect_sources
+    bundle = archive(tmp_path, {"trajectories.jsonl": forge_trajectories(), "grpo_rollouts.parquet": forge_rollouts()})
+    sources = collect_sources(bundle)
+    [metrics] = sources.environment_quality
+    assert (metrics.env_name, metrics.num_episodes, metrics.num_steps) == ("mail", 2, 4)
+    assert (metrics.reward_density, metrics.action_diversity, metrics.dead_end_rate) == (0.25, 0.75, 0.5)
+    assert metrics.state_coverage_score is None
+    assert len(sources.records) == 2  # the reward rows in the rollouts file still train
+
+
+def test_trajectories_beside_sft_pairs_still_trains(tmp_path):
+    from autotune.presentation.api.dataset_ingestion import load_dataset
+    dataset = load_dataset(archive(tmp_path, {"sft_pairs.jsonl": SFT_ROWS, "trajectories.jsonl": forge_trajectories()}))
+    assert dataset.total_records == 2
+    assert dataset.environment_quality[0].num_steps == 4
+
+
+def test_lone_trajectories_upload_has_nothing_to_train_on(tmp_path):
+    from autotune.presentation.api.dataset_ingestion import load_dataset
+    with pytest.raises(IngestionError, match="environment quality only"):
+        load_dataset(write(tmp_path, "trajectories.jsonl", forge_trajectories()))
+
+
+def test_rollouts_upload_trains_and_reports_environment_quality(tmp_path):
+    from autotune.presentation.api.dataset_ingestion import load_dataset
+    dataset = load_dataset(write(tmp_path, "grpo_rollouts.parquet", forge_rollouts()))
+    assert dataset.task_type == TaskType.RL_GRPO
+    [metrics] = dataset.environment_quality
+    assert (metrics.num_episodes, metrics.num_steps, metrics.dead_end_rate) == (2, 0, 0.5)

@@ -1,7 +1,9 @@
 """Unit tests for Autotune FastAPI Web UI backend."""
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
@@ -119,3 +121,25 @@ def test_status_quantization_matches_default_model(client, monkeypatch, vram):
 
     assert response.json()["recommended_quantization"] == (fit.value if fit else "none")
     assert response.json()["recommended_quantization"] == {0: "none", 36: "qlora_4bit_nf4", 48: "lora_16bit"}[vram]
+
+
+def test_an_upload_with_trajectories_returns_environment_quality(client, isolated_data_dir):
+    steps = [{"step_index": 0, "action": {"endpoint": "/a"}, "reward": 1.0, "terminated": True, "truncated": False}]
+    trajectory = json.dumps({"episode_id": "e1", "env": "mail", "task": "t", "seed": 1, "steps": steps}) + "\n"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr("trajectories.jsonl", trajectory)
+        zf.writestr("sft.jsonl", SFT_ROWS)
+
+    response = client.post("/api/dataset/upload", files={"file": ("bundle.zip", buffer.getvalue())})
+
+    assert response.status_code == 200
+    [metrics] = response.json()["environment_quality"]
+    assert (metrics["env_name"], metrics["num_steps"], metrics["reward_density"]) == ("mail", 1, 1.0)
+    assert metrics["state_coverage_score"] is None
+
+
+def test_an_upload_without_export_files_returns_no_environment_quality(client, isolated_data_dir):
+    response = client.post("/api/dataset/upload", files={"file": ("sft.jsonl", SFT_ROWS)})
+
+    assert response.json()["environment_quality"] == []

@@ -1,52 +1,36 @@
-"""Benchmark report generation tests."""
+"""Environment quality report files."""
+import csv
 import json
-import pytest
-from pathlib import Path
-from autotune.infrastructure.evaluators.report import BenchmarkReport, ReportConfig
-from autotune.infrastructure.evaluators.env_quality import EnvQualityMetrics
+
+from autotune.core.domain.models import EnvQualityMetrics
+from autotune.infrastructure.evaluators.report import write_env_quality
 
 
 def _metrics() -> list[EnvQualityMetrics]:
     return [
         EnvQualityMetrics(env_name="email_env", state_coverage_score=0.9, reward_density=0.7, dead_end_rate=0.1, action_diversity=0.6, num_episodes=10, num_steps=100),
-        EnvQualityMetrics(env_name="pm_env", state_coverage_score=0.8, reward_density=0.6, dead_end_rate=0.2, action_diversity=0.5, num_episodes=10, num_steps=90),
+        EnvQualityMetrics(env_name="pm_env", state_coverage_score=None, reward_density=0.6, dead_end_rate=0.2, action_diversity=0.5, num_episodes=10, num_steps=90),
     ]
 
 
-def test_report_writes_summary_json(tmp_path):
-    cfg = ReportConfig(output_dir=tmp_path)
-    report = BenchmarkReport(cfg)
-    report.write_env_quality(_metrics())
-    summary_path = tmp_path / "summary.json"
-    assert summary_path.exists()
-    data = json.loads(summary_path.read_text())
-    assert "env_quality" in data
-    assert len(data["env_quality"]) == 2
+def test_write_env_quality_writes_json_and_csv(tmp_path):
+    paths = write_env_quality(_metrics(), tmp_path)
+    assert paths == [tmp_path / "env_quality.json", tmp_path / "env_quality.csv"]
+    data = json.loads(paths[0].read_text())
+    assert [row["env_name"] for row in data] == ["email_env", "pm_env"]
+    assert data[1]["state_coverage_score"] is None
+    with paths[1].open() as handle:
+        rows = list(csv.DictReader(handle))
+    assert rows[0]["reward_density"] == "0.7"
+    assert rows[1]["state_coverage_score"] == ""
 
 
-def test_report_writes_env_quality_csv(tmp_path):
-    cfg = ReportConfig(output_dir=tmp_path)
-    report = BenchmarkReport(cfg)
-    report.write_env_quality(_metrics())
-    csv_path = tmp_path / "env_quality.csv"
-    assert csv_path.exists()
-    content = csv_path.read_text()
-    assert "email_env" in content
-    assert "state_coverage_score" in content
+def test_write_env_quality_creates_the_directory(tmp_path):
+    write_env_quality(_metrics(), tmp_path / "nested" / "out")
+    assert (tmp_path / "nested" / "out" / "env_quality.csv").exists()
 
 
-def test_report_all_metrics_in_csv(tmp_path):
-    cfg = ReportConfig(output_dir=tmp_path)
-    report = BenchmarkReport(cfg)
-    report.write_env_quality(_metrics())
-    content = (tmp_path / "env_quality.csv").read_text()
-    for col in ["env_name", "state_coverage_score", "reward_density", "dead_end_rate", "action_diversity"]:
-        assert col in content
-
-
-def test_report_with_no_metrics_writes_empty_quality(tmp_path):
-    cfg = ReportConfig(output_dir=tmp_path)
-    report = BenchmarkReport(cfg)
-    report.write_env_quality([])
-    data = json.loads((tmp_path / "summary.json").read_text())
-    assert data["env_quality"] == []
+def test_write_env_quality_with_no_metrics_writes_empty_files(tmp_path):
+    paths = write_env_quality([], tmp_path)
+    assert json.loads(paths[0].read_text()) == []
+    assert paths[1].read_text().startswith("env_name,")
