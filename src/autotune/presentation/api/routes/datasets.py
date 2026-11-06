@@ -77,7 +77,7 @@ def inspect_upload(
 
 @router.post(
     "/api/dataset/upload", response_model=UploadedDataset,
-    responses={202: {"model": IngestionAccepted, "description": "Accepted when `background=true`; poll the status route."}},
+    responses={202: {"model": IngestionAccepted, "description": "Accepted when `background=true`. Poll the status route for progress."}},
 )
 async def upload_dataset(file: Annotated[UploadFile, File()], state: State, background: bool = False) -> Any:
     name = _upload_name(file.filename)

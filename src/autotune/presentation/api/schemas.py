@@ -84,7 +84,7 @@ class IngestionJob(BaseModel):
     job_id: str
     status: str
     created_at: str
-    logs: list[str]
+    logs: list[str] = Field(default_factory=list)  # Records saved before job logs existed have none.
     dataset_name: str
     progress: dict[str, int]
     error: str | None

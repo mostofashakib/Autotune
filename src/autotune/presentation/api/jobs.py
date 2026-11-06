@@ -71,7 +71,7 @@ class JobRunner:
             return job_id in self._live
 
     def join(self, job_id: str, timeout: float | None = None) -> None:
-        """Wait for a job's thread to end. Tests use it to avoid sleeping."""
+        """Wait for a job's thread to end. The synchronous upload waits on it, and tests use it to avoid sleeping."""
         thread = self._threads.get(job_id)
         if thread is not None:
             thread.join(timeout)

@@ -687,7 +687,6 @@
           "job_id",
           "status",
           "created_at",
-          "logs",
           "dataset_name",
           "progress",
           "error"
@@ -2353,7 +2352,7 @@
                 }
               }
             },
-            "description": "Accepted when `background=true`; poll the status route."
+            "description": "Accepted when `background=true`. Poll the status route for progress."
           },
           "422": {
             "content": {

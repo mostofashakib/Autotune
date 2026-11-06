@@ -6,6 +6,7 @@ from unittest.mock import Mock
 from fastapi.testclient import TestClient
 from autotune.presentation.api import app as api
 from autotune.infrastructure.evaluators.openai_client import OpenAIChatClient
+from autotune.infrastructure.storage.job_store import JobStore
 
 
 def test_document_upload_and_training_reuses_generated_records(monkeypatch, isolated_data_dir):
@@ -45,3 +46,14 @@ def test_background_upload_exposes_generator_failure(monkeypatch):
 
 def test_missing_upload_job_is_not_success():
     assert TestClient(api.create_app()).get('/api/dataset/status/missing').status_code == 404
+
+
+def test_an_ingestion_record_saved_before_job_logs_still_loads(isolated_data_dir):
+    JobStore(isolated_data_dir / "autotune.db").save("ingestion", "ingest_legacy", {
+        "job_id": "ingest_legacy", "dataset_name": "old.jsonl", "created_at": "2026-10-01T00:00:00+00:00",
+        "status": "completed", "progress": {}, "error": None})
+
+    response = TestClient(api.create_app()).get("/api/dataset/status/ingest_legacy")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["logs"] == []

@@ -641,7 +641,7 @@ export interface components {
             /** Job Id */
             job_id: string;
             /** Logs */
-            logs: string[];
+            logs?: string[];
             /** Progress */
             progress: {
                 [key: string]: number;
@@ -1399,7 +1399,7 @@ export interface operations {
                     "application/json": components["schemas"]["UploadedDataset"];
                 };
             };
-            /** @description Accepted when `background=true`; poll the status route. */
+            /** @description Accepted when `background=true`. Poll the status route for progress. */
             202: {
                 headers: {
                     [name: string]: unknown;
