@@ -121,3 +121,33 @@ def test_load_sft_rejects_raw_text(tmp_path):
     path.write_text("text\nSome free text with no answer\n")
     with pytest.raises(IngestionError, match="prompt and reference answer pairs"):
         load_sft(path)
+
+
+FORGE_PAIR = {
+    "chosen": [{"role": "user", "content": "Task: t"}, {"role": "assistant", "content": "$ good"}],
+    "rejected": [{"role": "user", "content": "Task: t"}, {"role": "assistant", "content": "$ bad"}],
+    "chosen_reward": 0.9,
+    "rejected_reward": 0.1,
+}
+
+
+def test_load_sft_reads_forge_preference_directory(tmp_path):
+    (tmp_path / "preference_pairs.jsonl").write_text(json.dumps(FORGE_PAIR) + "\n")
+    (record,) = load_sft(tmp_path)
+    assert (record.prompt, record.completion, record.reward) == ("Task: t", "$ good", 0.9)
+
+
+def test_load_sft_rejects_malformed_lines(tmp_path):
+    path = tmp_path / "heldout.jsonl"
+    path.write_text('{"prompt": "q", "completion": "a"}\n{broken\n')
+    with pytest.raises(MalformedExportError, match="line"):
+        load_sft(path)
+
+
+def test_load_sft_uses_first_reply_of_multi_turn_row(tmp_path):
+    path = tmp_path / "heldout.jsonl"
+    messages = [{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "q2"}, {"role": "assistant", "content": "a2"}]
+    path.write_text(json.dumps({"messages": messages}) + "\n")
+    (record,) = load_sft(path)
+    assert (record.prompt, record.completion) == ("q1", "a1")

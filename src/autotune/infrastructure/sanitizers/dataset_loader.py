@@ -142,7 +142,7 @@ def _environment_of(prompt: str) -> str:
 
 
 def load_sft(path_or_dir: Path) -> list[SFTRecord]:
-    """Load SFT demonstrations from jsonl, batch export json, or rollouts parquet."""
+    """Load demonstrations from a Forge export directory, or any file the universal reader accepts."""
     path = Path(path_or_dir)
     if path.is_dir():
         path = _sft_source(path)
@@ -249,11 +249,15 @@ def _sft_from_json(path: Path) -> list[SFTRecord]:
 
 
 def sft_records(records: list[DatasetRecord]) -> list[SFTRecord]:
-    """One demonstration per record: first user message as prompt, assistant messages as completion."""
+    """One demonstration per record: first user message as prompt, the first assistant reply after it as completion."""
     demonstrations = []
     for record in records:
-        prompt = next((m.content for m in record.messages if m.role == "user"), "")
-        completion = "\n".join(m.content for m in record.messages if m.role == "assistant")
+        turns = record.messages
+        first_user = next((i for i, m in enumerate(turns) if m.role == "user"), None)
+        if first_user is None:
+            continue
+        prompt = turns[first_user].content
+        completion = next((m.content for m in turns[first_user + 1:] if m.role == "assistant"), "")
         if not prompt or not completion:
             continue
         meta = record.metadata
@@ -269,7 +273,7 @@ def sft_records(records: list[DatasetRecord]) -> list[SFTRecord]:
 
 
 def _reward_of(metadata: dict[str, Any]) -> float:
-    value = metadata.get("reward", metadata.get("total_reward", 1.0))
+    value = next((metadata[k] for k in ("reward", "total_reward", "chosen_reward") if k in metadata), 1.0)
     try:
         return float(value)
     except (TypeError, ValueError) as exc:
@@ -281,5 +285,10 @@ def _sft_from_universal_reader(path: Path) -> list[SFTRecord]:
     if sources.documents and not sources.records:
         raise IngestionError(
             f"{path.name} holds raw text only. Benchmark held-out data needs prompt and reference answer pairs."
+        )
+    if sources.dropped:
+        raise MalformedExportError(
+            f"{path.name} dropped {sources.dropped} rows and held-out data must load exactly. "
+            + " ".join(sources.warnings)
         )
     return sft_records(sources.records)

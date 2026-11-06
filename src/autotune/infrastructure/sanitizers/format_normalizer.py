@@ -262,8 +262,17 @@ def _response(value: Any) -> str:
     return ""
 
 
+def _first_user_content(messages: Any) -> str | None:
+    """The prompt of a Forge row, which carries it as the user turn inside `chosen`."""
+    if hasattr(messages, "tolist"):
+        messages = messages.tolist()
+    if not isinstance(messages, list):
+        return None
+    return next((m.get("content") for m in messages if isinstance(m, dict) and m.get("role") == "user"), None)
+
+
 def _preference(row: dict[str, Any], idx: int) -> DatasetRecord | None:
-    prompt = row.get("prompt")
+    prompt = row.get("prompt") if "prompt" in row else _first_user_content(row.get("chosen"))
     chosen, rejected = _response(row.get("chosen")), _response(row.get("rejected"))
     if not isinstance(prompt, str) or not prompt.strip() or not chosen or not rejected or chosen == rejected:
         return None

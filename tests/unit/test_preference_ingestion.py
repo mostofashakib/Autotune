@@ -3,7 +3,7 @@ import json
 import pytest
 from autotune.core.domain.models import TaskType, TrainingObjective
 from autotune.core.services.recipe_selector import AutoRecipeSelector
-from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
+from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer, normalize_file
 
 
 def sanitize(tmp_path, rows):
@@ -88,3 +88,14 @@ def test_parquet_message_preferences_keep_assistant_text(tmp_path):
     pd.DataFrame([{'prompt':'p', 'chosen':[{'role':'assistant','content':'good'}], 'rejected':[{'role':'assistant','content':'bad'}]}]).to_parquet(path)
     record = AutoFormatSanitizer().sanitize(path).train_records[0]
     assert record.metadata['chosen'] == 'good'
+
+
+def test_forge_rows_derive_prompt_from_chosen_messages():
+    row = {"chosen": [{"role": "user", "content": "Task: t"}, {"role": "assistant", "content": "$ good"}],
+           "rejected": [{"role": "user", "content": "Task: t"}, {"role": "assistant", "content": "$ bad"}],
+           "chosen_reward": 0.9, "rejected_reward": 0.1}
+    parsed = normalize_file("preference_pairs.jsonl", json.dumps(row).encode())
+    assert parsed.task_type == TaskType.PREFERENCE
+    (record,) = parsed.records
+    assert record.prompt == "Task: t"
+    assert record.metadata["chosen"] == "$ good" and record.metadata["rejected"] == "$ bad"
