@@ -28,6 +28,12 @@ export function riskTone(risk: string | null | undefined): Tone {
   return "idle";
 }
 
+/** Grader/judge kappa, or why it is missing. `judged` is true when any sample got a judge score. */
+export function kappaLabel(kappa: number | null | undefined, judged: boolean): string {
+  if (typeof kappa === "number") return kappa.toFixed(2);
+  return judged ? "Not measured: a rater never varied" : "No judge configured";
+}
+
 export function formatScore(value: number | null | undefined): string {
   return value === null || value === undefined ? "n/a" : `${(value * 100).toFixed(1)}%`;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { formatDelta, formatScore, formatWhen, isTerminal, riskTone, statusTone } from "../lib/format.ts";
+import { formatDelta, formatScore, formatWhen, isTerminal, kappaLabel, riskTone, statusTone } from "../lib/format.ts";
 
 test("running is the only non-terminal status", () => {
   assert.equal(isTerminal("running"), false);
@@ -38,4 +38,11 @@ test("deltas carry their sign", () => {
 test("timestamps format in the viewer's locale and a missing one says so", () => {
   assert.equal(formatWhen(undefined), "unknown");
   assert.notEqual(formatWhen("2026-10-12T10:00:00+00:00"), "unknown");
+});
+
+test("kappa says why it is missing: no judge, or a rater that never varied", () => {
+  assert.equal(kappaLabel(0.4123, true), "0.41");
+  assert.equal(kappaLabel(null, false), "No judge configured");
+  assert.equal(kappaLabel(null, true), "Not measured: a rater never varied");
+  assert.equal(kappaLabel(undefined, true), "Not measured: a rater never varied");
 });

@@ -1,4 +1,4 @@
-import { formatScore, riskTone } from "@/lib/format";
+import { formatScore, kappaLabel, riskTone } from "@/lib/format";
 import type { RobustnessScore } from "@/lib/types";
 
 const WIDTH = 260;
@@ -58,13 +58,12 @@ function Curves({ score }: { score: RobustnessScore }) {
   );
 }
 
-export function RobustnessCard({ label, score }: { label: string; score: RobustnessScore }) {
-  const kappa = score.grader_judge_kappa;
+export function RobustnessCard({ label, score, judged }: { label: string; score: RobustnessScore; judged: boolean }) {
   return (
     <div className="space-y-3">
       <h3 className="mono">{label}</h3>
       <Curves score={score} />
-      <p className="mono">Grader/judge kappa: {typeof kappa === "number" ? kappa.toFixed(2) : "No judge configured"}</p>
+      <p className="mono">Grader/judge kappa: {kappaLabel(score.grader_judge_kappa, judged)}</p>
       <div className="flex flex-wrap gap-2">
         <RiskChip label="Reward hacking" value={score.reward_hacking_risk} />
         <RiskChip label="Memorization" value={score.memorization_risk} />

@@ -70,8 +70,8 @@ export default function BenchmarkRunPage({ params }: { params: Promise<{ id: str
           {report.base_robustness && report.trained_robustness ? (
             <Panel index="C" title="Robustness">
               <div className="grid gap-8 md:grid-cols-2">
-                <RobustnessCard label="Base" score={report.base_robustness} />
-                <RobustnessCard label="Trained" score={report.trained_robustness} />
+                <RobustnessCard label="Base" score={report.base_robustness} judged={report.base.mean_judge_score != null} />
+                <RobustnessCard label="Trained" score={report.trained_robustness} judged={report.trained.mean_judge_score != null} />
               </div>
             </Panel>
           ) : null}
