@@ -185,3 +185,15 @@ def test_cli_train_without_cuda_prints_the_message_without_a_traceback(sft_file,
     assert result.exit_code == 1
     assert isinstance(result.exception, SystemExit)
     assert "Training requires a CUDA GPU" in result.output
+
+
+def test_cli_train_rejects_grpo_rows_without_rewards(cli, tmp_path):
+    path = tmp_path / "partial.jsonl"
+    rows = [{"prompt": f"q{i}", "completion": f"a{i}", **({"reward": 1.0} if i % 2 else {})} for i in range(12)]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    result = cli.invoke(main.app, ["train", str(path), "--base-model", OPEN_MODEL])
+
+    assert result.exit_code == 1
+    assert "GRPO needs a numeric reward in every row. Rows without one: 6." in " ".join(result.output.split())
+    assert RecordingBackend.jobs == []

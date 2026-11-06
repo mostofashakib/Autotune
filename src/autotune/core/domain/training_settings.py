@@ -6,6 +6,7 @@ from typing import Literal
 from autotune.core.domain.limits import GRPO_MAX_LEARNING_RATE, require_valid_vram
 from autotune.core.domain.model_catalog import ModelSpec, memory_baseline
 from autotune.core.domain.models import DatasetRecord, Recipe, TrainingObjective
+from autotune.core.domain.rewards import row_reward
 
 TrainingIntensity = Literal["quick", "balanced", "thorough"]
 
@@ -61,6 +62,12 @@ def validate_training_recipe(recipe: Recipe, model: ModelSpec, vram: float) -> N
 
 def validate_rows_for(objective: TrainingObjective, records: list[DatasetRecord]) -> None:
     """Reject records the selected objective cannot train on."""
+    if objective == TrainingObjective.GRPO:
+        unrewarded = sum(1 for record in records if row_reward(record.metadata) is None)
+        if unrewarded:
+            raise ValueError(f"GRPO needs a numeric reward in every row. Rows without one: {unrewarded}. "
+                             "Add total_reward or reward to each row, or select SFT.")
+        return
     if objective != TrainingObjective.DPO:
         return
     for record in records:

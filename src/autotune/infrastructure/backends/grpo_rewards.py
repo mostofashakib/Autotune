@@ -4,9 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from autotune.core.domain.models import DatasetRecord
+from autotune.core.domain.rewards import row_reward
 from autotune.infrastructure.evaluators.scoring import token_f1
-
-REWARD_KEYS = ("total_reward", "reward", "rewards")
 
 
 def reference_reward(completions: list[Any], reference: list[str], **kwargs: Any) -> list[float]:
@@ -27,19 +26,11 @@ def grpo_rows(records: list[DatasetRecord]) -> list[dict[str, Any]]:
 
 
 def _record_reward(record: DatasetRecord) -> float:
-    for key in REWARD_KEYS:
-        if key not in record.metadata:
-            continue
-        value = record.metadata[key]
-        if isinstance(value, list) and value and all(_is_number(v) for v in value):
-            return float(sum(value))
-        if _is_number(value):
-            return float(value)
-    raise ValueError("GRPO needs a numeric reward (total_reward, reward, or rewards) in every row. Upload reward-labeled rows or select SFT.")
-
-
-def _is_number(value: Any) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    reward = row_reward(record.metadata)
+    if reward is None:
+        raise ValueError("GRPO needs a numeric reward (total_reward, reward, rewards, or per_step_rewards) in every row. "
+                         "Upload reward-labeled rows or select SFT.")
+    return reward
 
 
 def _first_content(record: DatasetRecord, role: str) -> str:
@@ -53,4 +44,5 @@ def _last_content(record: DatasetRecord, role: str) -> str:
 def _completion_text(completion: Any) -> str:
     if isinstance(completion, str):
         return completion
-    return next((str(m.get("content", "")) for m in reversed(completion) if m.get("role") == "assistant"), "")
+    return next((str(m.get("content", "")) for m in reversed(completion)
+                 if isinstance(m, dict) and m.get("role") == "assistant"), "")

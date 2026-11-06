@@ -145,3 +145,20 @@ def test_recommend_and_start_agree_on_forced_quantization(client, dataset, tmp_p
 def test_an_unknown_job_is_404(client):
     assert client.get("/api/training/status/nope").status_code == 404
     assert client.post("/api/training/cancel/nope").status_code == 404
+
+
+PARTIAL_REWARD_MESSAGE = ("GRPO needs a numeric reward in every row. Rows without one: 6. "
+                          "Add total_reward or reward to each row, or select SFT.")
+
+
+def test_grpo_rows_without_rewards_are_rejected_before_any_job_starts(client, tmp_path, monkeypatch):
+    path = tmp_path / "partial.jsonl"
+    rows = [{"prompt": f"q{i}", "completion": f"a{i}", **({"reward": 1.0} if i % 2 else {})} for i in range(12)]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    monkeypatch.setattr(api, "build_hardware_probe", lambda: SimpleNamespace(available_vram_gb=lambda: 48))
+    monkeypatch.setattr(api, "build_training_backend", lambda: pytest.fail("no backend should be built"))
+
+    response = _start(client, path, tmp_path)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == PARTIAL_REWARD_MESSAGE

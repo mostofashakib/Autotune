@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from autotune.core.domain.models import ChatMessage, CleanedDataset, DatasetRecord, TaskType
+from autotune.core.domain.rewards import reward_value, row_reward
 from autotune.core.ports.sanitizer import DataSanitizer, IngestionError
 from autotune.infrastructure.sanitizers.text_decoding import decode_text
 
@@ -70,7 +71,7 @@ def normalize_file(name: str, data: bytes) -> StructuredFile:
         if normalized is None:
             continue
         records.append(normalized)
-        if any(_reward_present(row.get(key)) for key in ("total_reward", "per_step_rewards", "rewards", "reward")):
+        if row_reward(row) is not None:
             task_type = TaskType.RL_GRPO
         elif task_type != TaskType.RL_GRPO and "chosen" in normalized.metadata and "rejected" in normalized.metadata:
             task_type = TaskType.PREFERENCE
@@ -239,17 +240,6 @@ def _json_rows(text: str) -> tuple[list[Any], list[int]]:
     return rows, bad_lines
 
 
-def _reward_present(value: Any) -> bool:
-    if hasattr(value, "tolist"):
-        value = value.tolist()
-    if isinstance(value, list):
-        return bool(value) and all(_reward_present(item) for item in value)
-    try:
-        return value is not None and not isinstance(value, bool) and math.isfinite(float(value))
-    except (ValueError, TypeError):
-        return False
-
-
 def _response(value: Any) -> str:
     if isinstance(value, str):
         return value.strip()
@@ -277,7 +267,7 @@ def _preference(row: dict[str, Any], idx: int) -> DatasetRecord | None:
     if not isinstance(prompt, str) or not prompt.strip() or not chosen or not rejected or chosen == rejected:
         return None
     if "chosen_reward" in row or "rejected_reward" in row:
-        if not all(isinstance(row.get(k), (int, float, str)) and _reward_present(row.get(k)) for k in ("chosen_reward", "rejected_reward")):
+        if not all(isinstance(row.get(k), (int, float, str)) and reward_value(row.get(k)) is not None for k in ("chosen_reward", "rejected_reward")):
             return None
         if float(row["chosen_reward"]) <= float(row["rejected_reward"]):
             return None
