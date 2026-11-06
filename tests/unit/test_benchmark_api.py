@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from autotune.core.domain.models import SampleResult
 from autotune.infrastructure.evaluators.openai_client import ModelCallError
 from autotune.presentation.api import app as api
+from autotune.presentation.api.routes import benchmarks
 
 
 class FakeRunner:
@@ -47,7 +48,7 @@ def _wait(client, job_id):
 
 
 def test_a_benchmark_job_reports_the_measured_comparison(client, tmp_path, monkeypatch):
-    monkeypatch.setattr(api, "build_benchmark_runner", lambda request: FakeRunner())
+    monkeypatch.setattr(benchmarks, "build_benchmark_runner", lambda request: FakeRunner())
 
     started = client.post("/api/benchmark", json=_body(tmp_path))
     job = _wait(client, started.json()["job_id"])
@@ -59,7 +60,7 @@ def test_a_benchmark_job_reports_the_measured_comparison(client, tmp_path, monke
 
 
 def test_a_model_failure_fails_the_job_with_no_report(client, tmp_path, monkeypatch):
-    monkeypatch.setattr(api, "build_benchmark_runner", lambda request: FakeRunner(fail_on="trained"))
+    monkeypatch.setattr(benchmarks, "build_benchmark_runner", lambda request: FakeRunner(fail_on="trained"))
 
     job = _wait(client, client.post("/api/benchmark", json=_body(tmp_path)).json()["job_id"])
 

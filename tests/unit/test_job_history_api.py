@@ -12,6 +12,7 @@ from autotune import settings
 from autotune.core.domain.models import CheckpointResult, JobStatus, SampleResult, TrainingProgress
 from autotune.infrastructure.storage.job_store import JobStore
 from autotune.presentation.api import app as api
+from autotune.presentation.api.routes import benchmarks
 
 
 class FakeBackend:
@@ -136,7 +137,7 @@ def test_the_job_database_lives_in_the_data_dir(monkeypatch, dataset, tmp_path, 
 
 
 def test_a_finished_benchmark_survives_a_restart_and_is_listed_with_its_headline(monkeypatch, tmp_path):
-    monkeypatch.setattr(api, "build_benchmark_runner", lambda request: FakeRunner())
+    monkeypatch.setattr(benchmarks, "build_benchmark_runner", lambda request: FakeRunner())
     first = TestClient(api.create_app())
     job_id = _benchmark(first, tmp_path)
     _wait(first, f"/api/benchmark/{job_id}")
@@ -158,7 +159,7 @@ def test_a_failed_benchmark_lists_without_a_headline(monkeypatch, tmp_path):
         def run(self, model):
             raise ValueError("endpoint refused")
 
-    monkeypatch.setattr(api, "build_benchmark_runner", lambda request: Broken())
+    monkeypatch.setattr(benchmarks, "build_benchmark_runner", lambda request: Broken())
     client = TestClient(api.create_app())
     _wait(client, f"/api/benchmark/{_benchmark(client, tmp_path)}")
 
