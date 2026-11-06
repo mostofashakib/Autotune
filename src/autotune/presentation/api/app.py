@@ -8,10 +8,9 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from collections.abc import Callable
 from typing import Any, Literal, Optional
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -20,19 +19,15 @@ from autotune.core.domain.models import (
     JobStatus,
     ModelEndpoint,
     QuantizationMethod,
-    RunPodConfig,
     TrainingJob,
     TrainingObjective,
-    TaskType,
     TrainingProgress,
 )
 from autotune.core.domain.limits import MAX_UPLOAD_BYTES
 from autotune.core.domain.training_settings import TrainingIntensity
-from autotune.core.domain.model_catalog import catalog_for_vram, default_model, fitting_quantization
 from autotune.core.services.training_planner import TUNABLE_FIELDS, TrainingPlan, TrainingPlanner, TrainingRequest
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.models.hub_metadata import resolve_model
-from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.core.ports.hardware import HardwareProbe
 from autotune.core.ports.evaluator import BenchmarkRunner
 from autotune.core.ports.trainer import TrainingBackend
@@ -48,19 +43,14 @@ from autotune.infrastructure.storage.job_store import JobStore
 from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.presentation.api.error_handlers import install_error_handlers
 from autotune.presentation.api.jobs import JobRunner
-from autotune.presentation.api.routes import serving
+from autotune.presentation.api.routes import cloud, serving, system
 from autotune.presentation.api.state import AppState, ServingSlot
 from autotune.presentation.errors import EXPECTED_FAILURES
 from autotune.settings import (
-    CREDENTIALS,
     HF_TOKEN,
     require_credential,
-    ENV_FILE,
-    CredentialNotConfigured,
-    credential_value,
     data_dir,
     export_configured_credentials,
-    is_configured,
     ui_origin,
 )
 
@@ -87,17 +77,6 @@ class TrainingStartRequest(BaseModel):
         return value.lower() if isinstance(value, str) else value
 
 
-def _runpod_call(call: Callable[[], Any]) -> Any:
-    """RunPod's answer, or an HTTP error: 503 without a configured key, 502 when RunPod fails."""
-    try:
-        return call()
-    except CredentialNotConfigured as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except (RuntimeError, ConnectionError, ValueError) as exc:
-        logger.warning("RunPod request failed: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-
 # Live-only keys never reach the job store or the API.
 _LIVE_KEYS = {"backend"}
 # The run list leaves out what only the detail view needs.
@@ -120,15 +99,6 @@ def _benchmark_summary(record: dict[str, Any]) -> dict[str, Any]:
         "delta_pass_at_1": report["delta_pass_at_1"],
     }
     return {**_summary(record), "headline": headline}
-
-
-def recommended_quantization(vram: float) -> str:
-    """Quantization of the default chat model for this VRAM, or "none" when nothing fits."""
-    try:
-        quantization = fitting_quantization(default_model(TaskType.CHAT, vram)[0], vram)
-    except ValueError:
-        return "none"
-    return quantization.value if quantization else "none"
 
 
 def _now() -> str:
@@ -211,13 +181,6 @@ def build_benchmark_runner(req: BenchmarkRequest) -> BenchmarkRunner:
     return DatasetBenchmark(load_sft(Path(req.path)), client, req.k, judge=judge, max_tokens=req.max_tokens)
 
 
-class RunPodLaunchRequest(BaseModel):
-    gpu_type: str = "NVIDIA GeForce RTX 4090"
-    pod_name: str = "autotune-pod"
-    disk_gb: int = 50
-    api_key: Optional[str] = None
-
-
 def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
     export_configured_credentials()
@@ -252,7 +215,8 @@ def create_app() -> FastAPI:
         build_training_backend=lambda: build_training_backend(),
         build_hardware_probe=lambda: build_hardware_probe(),
     )
-    app.include_router(serving.router)
+    for router in (system.router, cloud.router, serving.router):
+        app.include_router(router)
     install_error_handlers(app)
 
     app.add_middleware(
@@ -261,37 +225,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    @app.get("/")
-    async def index() -> dict[str, str]:
-        return {"name": "Autotune API", "ui": ui_origin(), "docs": "/docs"}
-
-    @app.get("/api/settings/credentials")
-    async def credentials() -> list[dict[str, Any]]:
-        return [
-            {
-                "name": credential.env_var,
-                "purpose": credential.purpose,
-                "configured": is_configured(credential_value(credential)),
-                "env_file": ENV_FILE.name,
-            }
-            for credential in CREDENTIALS
-        ]
-
-    @app.get("/api/models")
-    async def models(vram: float | None = Query(default=None, ge=0, allow_inf_nan=False)) -> list[dict]:
-        return catalog_for_vram(build_hardware_probe().available_vram_gb() if vram is None else vram)
-
-    @app.get("/api/system/status")
-    async def get_system_status() -> dict[str, Any]:
-        vram = build_hardware_probe().available_vram_gb()
-        has_cuda = vram > 0
-        return {
-            "vram_gb": round(vram, 2),
-            "cuda_available": has_cuda,
-            "device": "CUDA" if has_cuda else "CPU / no CUDA",
-            "recommended_quantization": recommended_quantization(vram),
-        }
 
     def inspect_upload(dest_path: Path, state: dict[str, Any]) -> dict[str, Any]:
         def progress(update: dict[str, int]) -> None:
@@ -486,46 +419,5 @@ def create_app() -> FastAPI:
         if job is None:
             raise HTTPException(status_code=404, detail="Benchmark job not found")
         return job
-
-    @app.get("/api/cloud/gpus")
-    async def get_cloud_gpus(api_key: Optional[str] = None) -> list[dict[str, Any]]:
-        return _runpod_call(lambda: RunPodCloudProvider(api_key=api_key).list_available_gpus())
-
-    @app.post("/api/cloud/launch")
-    async def launch_cloud_pod(req: RunPodLaunchRequest) -> dict[str, Any]:
-        config = RunPodConfig(
-            gpu_type_id=req.gpu_type,
-            pod_name=req.pod_name,
-            container_disk_in_gb=req.disk_gb,
-            volume_in_gb=req.disk_gb,
-        )
-        pod = _runpod_call(lambda: RunPodCloudProvider(api_key=req.api_key).create_instance(config).model_dump())
-        store.save("pod", pod["pod_id"], {**pod, "launched_at": _now()})
-        return pod
-
-    @app.get("/api/cloud/pods")
-    def list_cloud_pods(api_key: Optional[str] = None) -> list[dict[str, Any]]:
-        """Pods launched from Autotune, with RunPod's live status, or the stored record and why it is stale."""
-        pods = []
-        for record in store.list("pod"):
-            if record["status"] == "TERMINATED":
-                pods.append({**record, "live_error": None})
-                continue
-            try:
-                live = RunPodCloudProvider(api_key=api_key).get_instance_status(record["pod_id"]).model_dump()
-            except (CredentialNotConfigured, RuntimeError, ConnectionError, ValueError) as exc:
-                pods.append({**record, "live_error": str(exc)})
-            else:
-                pods.append({**record, **live, "live_error": None})
-        return pods
-
-    @app.post("/api/cloud/stop/{pod_id}")
-    async def stop_cloud_pod(pod_id: str, api_key: Optional[str] = None) -> dict[str, Any]:
-        if not _runpod_call(lambda: RunPodCloudProvider(api_key=api_key).stop_instance(pod_id)):
-            raise HTTPException(status_code=502, detail=f"RunPod did not terminate pod {pod_id}")
-        record = store.get("pod", pod_id)
-        if record is not None:
-            store.save("pod", pod_id, {**record, "status": "TERMINATED"})
-        return {"pod_id": pod_id, "status": "TERMINATED"}
 
     return app

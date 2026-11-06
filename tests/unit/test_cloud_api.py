@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from autotune import settings
 from autotune.core.domain.models import RunPodInstance
 from autotune.presentation.api import app as api
+from autotune.presentation.api.routes import cloud
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ class FakeRunPod:
 def runpod(monkeypatch):
     monkeypatch.setenv("RUNPOD_API_KEY", "rp-live-123")
     fake = FakeRunPod()
-    monkeypatch.setattr(api, "RunPodCloudProvider", lambda api_key=None: fake)
+    monkeypatch.setattr(cloud, "RunPodCloudProvider", lambda api_key=None: fake)
     return fake
 
 
@@ -125,7 +126,7 @@ class StatusRunPod(FakeRunPod):
 def status_runpod(monkeypatch):
     monkeypatch.setenv("RUNPOD_API_KEY", "rp-live-123")
     fake = StatusRunPod()
-    monkeypatch.setattr(api, "RunPodCloudProvider", lambda api_key=None: fake)
+    monkeypatch.setattr(cloud, "RunPodCloudProvider", lambda api_key=None: fake)
     return fake
 
 
