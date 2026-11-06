@@ -20,7 +20,7 @@ def read_rollouts(source: Any, label: str, required: frozenset[str]) -> list[Rol
     try:
         import pandas as pd
     except ImportError as exc:
-        raise MissingExtraError("loading rollouts requires pandas") from exc
+        raise MissingExtraError("Loading rollouts requires pandas, a core dependency. Run: uv sync") from exc
 
     try:
         frame = pd.read_parquet(source)

@@ -13,7 +13,7 @@ from autotune.core.ports.storage import CheckpointStorage
 from autotune.infrastructure.storage.checkpoint import MANIFEST_NAME
 from autotune.settings import llama_cpp_dir
 
-TRAINING_EXTRA_MESSAGE = "Training dependencies missing. Install via `pip install 'autotune[training]'`."
+TRAINING_EXTRA_MESSAGE = "Training dependencies missing. Run: uv sync --extra training"
 
 
 def run_converter(args: list[str]) -> None:

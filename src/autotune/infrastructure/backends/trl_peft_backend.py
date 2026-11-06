@@ -72,7 +72,7 @@ class TrlPeftBackend(TrainingBackend):
                 logger.info("Configured 4-bit NormalFloat (QLoRA) quantization.")
             except ImportError as exc:
                 raise MissingExtraError(
-                    "QLoRA requires bitsandbytes. Install via `pip install bitsandbytes`."
+                    "QLoRA requires bitsandbytes. Run: uv sync --extra training"
                 ) from exc
         elif recipe.quantization == QuantizationMethod.LORA_16BIT:
             if torch.cuda.is_available():

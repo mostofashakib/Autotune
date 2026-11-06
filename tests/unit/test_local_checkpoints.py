@@ -77,7 +77,7 @@ def test_export_gguf_runs_converter(tmp_path, llama_cpp):
 
 def test_merge_without_peft_names_the_training_extra(tmp_path, llama_cpp, monkeypatch):
     monkeypatch.setitem(sys.modules, "peft", None)
-    with pytest.raises(MissingExtraError, match=r"autotune\[training\]"):
+    with pytest.raises(MissingExtraError, match="uv sync --extra training"):
         LocalCheckpointStorage(convert=lambda args: None).export_gguf(tmp_path, tmp_path / "out.gguf")
 
 
