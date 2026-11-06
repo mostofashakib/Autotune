@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import math
+from autotune.core.domain.limits import GRPO_MAX_LEARNING_RATE, require_valid_vram
 from autotune.core.domain.model_catalog import MODELS, ModelSpec, fitting_quantization, get_model, memory_baseline
 from autotune.core.domain.training_settings import estimate_memory_gb, validate_training_recipe
 from autotune.core.domain.models import CleanedDataset, QuantizationMethod, Recipe, TaskType, TrainingObjective
@@ -51,8 +52,7 @@ class AutoRecipeSelector:
         else:
             objective = TrainingObjective.SFT
 
-        if not math.isfinite(vram) or vram < 0:
-            raise ValueError("VRAM must be a finite nonnegative number")
+        require_valid_vram(vram)
         if forced_model:
             model = get_model(forced_model) or model_spec
             if model is None or model.hf_id != forced_model:
@@ -99,7 +99,7 @@ class AutoRecipeSelector:
             grad_accum = 2
 
         if objective == TrainingObjective.GRPO:
-            learning_rate = min(learning_rate, 2e-5)
+            learning_rate = min(learning_rate, GRPO_MAX_LEARNING_RATE)
 
         recipe = Recipe(
             base_model=base_model,

@@ -26,6 +26,7 @@ from autotune.core.domain.models import (
     TrainingObjective,
     TrainingProgress,
 )
+from autotune.core.domain.limits import MAX_UPLOAD_BYTES
 from autotune.core.domain.training_settings import TrainingIntensity, intensity_recipes, validate_training_recipe
 from autotune.core.domain.model_catalog import catalog_for_vram
 from autotune.core.services.recipe_selector import AutoRecipeSelector
@@ -306,8 +307,8 @@ def create_app() -> FastAPI:
         uploads = _uploads_dir()
         uploads.mkdir(parents=True, exist_ok=True)
         dest_path = uploads / name
-        data = await file.read(100 * 1024 * 1024 + 1)
-        if len(data) > 100 * 1024 * 1024:
+        data = await file.read(MAX_UPLOAD_BYTES + 1)
+        if len(data) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="Upload exceeds 100 MiB")
         dest_path.write_bytes(data)
         state = {"job_id": f"ingest_{uuid.uuid4().hex[:12]}", "dataset_name": name,

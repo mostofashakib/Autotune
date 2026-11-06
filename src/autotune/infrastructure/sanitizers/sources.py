@@ -6,6 +6,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from autotune.core.domain.limits import MAX_FILE_BYTES, MAX_UPLOAD_BYTES
 from autotune.core.domain.models import CleanedDataset, DatasetRecord, TaskType
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.infrastructure.sanitizers.document_text import DOCUMENT_SUFFIXES, extract_text
@@ -13,8 +14,8 @@ from autotune.infrastructure.sanitizers.format_normalizer import STRUCTURED_SUFF
 
 logger = logging.getLogger(__name__)
 SUPPORTED_SUFFIXES = DOCUMENT_SUFFIXES | STRUCTURED_SUFFIXES | {".zip"}
-MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
-MAX_ARCHIVE_BYTES = 100 * 1024 * 1024
+MAX_DOCUMENT_BYTES = MAX_FILE_BYTES
+MAX_ARCHIVE_BYTES = MAX_UPLOAD_BYTES
 _SYSTEM_FILES = {"thumbs.db", "desktop.ini"}
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 from typing import Literal
+from autotune.core.domain.limits import GRPO_MAX_LEARNING_RATE, require_valid_vram
 from autotune.core.domain.model_catalog import ModelSpec, memory_baseline
 from autotune.core.domain.models import Recipe, TrainingObjective
 
@@ -15,7 +16,7 @@ def intensity_recipes(recipe: Recipe) -> dict[str, Recipe]:
     for name, epoch_scale, rate_scale in (("quick", .5, .5), ("balanced", 1, 1), ("thorough", 1.5, .75)):
         rate = round(recipe.learning_rate * rate_scale, 12)
         if recipe.objective == TrainingObjective.GRPO:
-            rate = min(rate, 2e-5)
+            rate = min(rate, GRPO_MAX_LEARNING_RATE)
         result[name] = recipe.model_copy(update={"epochs": max(1, math.ceil(recipe.epochs * epoch_scale)), "learning_rate": rate})
     return result
 
@@ -46,12 +47,11 @@ def validate_training_recipe(recipe: Recipe, model: ModelSpec, vram: float) -> N
             raise ValueError(f"{name} must be positive")
     if not math.isfinite(recipe.learning_rate) or not 0 < recipe.learning_rate <= .1:
         raise ValueError("learning_rate must be finite, positive, and at most 0.1")
-    if recipe.objective == TrainingObjective.GRPO and recipe.learning_rate > 2e-5:
+    if recipe.objective == TrainingObjective.GRPO and recipe.learning_rate > GRPO_MAX_LEARNING_RATE:
         raise ValueError("GRPO learning_rate must be at most 0.00002")
     if recipe.max_seq_length > model.context_length:
         raise ValueError(f"max_seq_length exceeds {model.hf_id}'s context length {model.context_length}")
-    if not math.isfinite(vram) or vram < 0:
-        raise ValueError("VRAM must be finite and nonnegative")
+    require_valid_vram(vram)
     needed = estimate_memory_gb(recipe, model)
     # Inspection and CPU-only development remain available. The real backend
     # checks CUDA before any tokenizer/model download.

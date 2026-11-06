@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
+from autotune.core.domain.limits import require_valid_vram
 from autotune.core.domain.models import QuantizationMethod
 
 
@@ -67,8 +68,7 @@ def get_model(hf_id: str) -> ModelSpec | None:
 
 def fitting_quantization(model: ModelSpec, vram: float) -> QuantizationMethod | None:
     """Prefer 16-bit LoRA if it fits, otherwise NF4, otherwise no fit."""
-    if not math.isfinite(vram) or vram < 0:
-        raise ValueError("VRAM must be a finite nonnegative number")
+    require_valid_vram(vram)
     if vram >= model.lora_min_vram_gb:
         return QuantizationMethod.LORA_16BIT
     if vram >= model.qlora_min_vram_gb:
