@@ -246,3 +246,40 @@ def test_rollouts_upload_trains_and_reports_environment_quality(tmp_path):
     assert dataset.task_type == TaskType.RL_GRPO
     [metrics] = dataset.environment_quality
     assert (metrics.num_episodes, metrics.num_steps, metrics.dead_end_rate) == (2, 0, 0.5)
+
+
+def forge_preferences():
+    row = {"task": "t", "env_name": "mail", "chosen": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "good"}],
+           "rejected": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "bad"}],
+           "chosen_reward": 1.0, "rejected_reward": 0.0}
+    return json.dumps(row) + "\n"
+
+
+def test_full_forge_bundle_trains_on_one_member_and_reports_quality(tmp_path):
+    from autotune.presentation.api.dataset_ingestion import load_dataset
+    bundle = archive(tmp_path, {"sft_pairs.jsonl": SFT_ROWS, "preference_pairs.jsonl": forge_preferences(),
+                                "grpo_rollouts.parquet": forge_rollouts(), "trajectories.jsonl": forge_trajectories()})
+    dataset = load_dataset(bundle)
+    assert dataset.task_type == TaskType.CHAT
+    assert dataset.total_records == 2
+    [metrics] = dataset.environment_quality
+    assert (metrics.num_steps, metrics.dead_end_rate) == (4, 0.5)
+    assert any("Trained on sft_pairs.jsonl from this Forge bundle. Skipped" in w
+               and "preference_pairs.jsonl" in w and "grpo_rollouts.parquet" in w for w in dataset.warnings)
+
+
+def test_forge_bundle_without_sft_trains_on_the_next_member_in_priority(tmp_path):
+    from autotune.infrastructure.sanitizers.sources import collect_sources
+    bundle = archive(tmp_path, {"preference_pairs.jsonl": forge_preferences(), "grpo_rollouts.parquet": forge_rollouts(),
+                                "trajectories.jsonl": forge_trajectories()})
+    sources = collect_sources(bundle)
+    assert sources.task_type == TaskType.PREFERENCE
+    assert any("Trained on preference_pairs.jsonl" in w for w in sources.warnings)
+    assert sources.environment_quality
+
+
+def test_zip_that_is_not_a_forge_bundle_still_rejects_mixed_data(tmp_path):
+    from autotune.infrastructure.sanitizers.sources import collect_sources
+    bundle = archive(tmp_path, {"chat.jsonl": SFT_ROWS, "grpo_rollouts.parquet": forge_rollouts()})
+    with pytest.raises(IngestionError, match="mixes"):
+        collect_sources(bundle)

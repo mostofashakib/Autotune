@@ -5,89 +5,16 @@ import json
 from pathlib import Path
 from typing import Any
 
-from autotune.core.domain.errors import MissingExtraError
 from autotune.core.domain.models import DatasetRecord, PreferenceRecord, RolloutRecord, SFTRecord
 from autotune.core.ports.sanitizer import IngestionError
+from autotune.infrastructure.sanitizers.export_quality import FORGE_TRAINING_PRIORITY
+from autotune.infrastructure.sanitizers.rollout_rows import LOAD_COLUMNS, MalformedExportError, environment_of, read_rollouts
 from autotune.infrastructure.sanitizers.sources import collect_sources
-
-
-class MalformedExportError(ValueError):
-    """An export file exists but does not match the expected schema."""
-
-
-_ROLLOUT_COLUMNS = {"episode_id", "task_name", "prompt", "completion", "total_reward", "passed"}
 
 
 def load_rollouts(path: Path) -> list[RolloutRecord]:
     """Load graded episodes from a `grpo_rollouts.parquet` file."""
-    try:
-        import pandas as pd
-    except ImportError as exc:
-        raise MissingExtraError("loading rollouts requires pandas") from exc
-
-    try:
-        df = pd.read_parquet(path)
-    except Exception as exc:
-        raise MalformedExportError(f"could not read rollouts parquet {path}: {exc}") from exc
-
-    missing = _ROLLOUT_COLUMNS - set(df.columns)
-    if missing:
-        raise MalformedExportError(f"rollouts {path} missing columns: {sorted(missing)}")
-
-    records: list[RolloutRecord] = []
-    for row in df.to_dict("records"):
-        records.append(
-            RolloutRecord(
-                episode_id=str(row["episode_id"]),
-                env_name=str(row.get("env_name") or _environment_of(str(row["prompt"]))),
-                task_name=str(row["task_name"]),
-                prompt=str(row["prompt"]),
-                completion=str(row["completion"]),
-                total_reward=float(row["total_reward"]),
-                passed=bool(row["passed"]),
-                per_step_rewards=_parse_per_step(row.get("per_step_rewards")),
-                behavior_model=str(row.get("behavior_model") or ""),
-                termination_reason=str(row.get("termination_reason") or "unknown"),
-                verification_results=_parse_json_list(row.get("verification_results")),
-                reward_breakdown=_parse_json_dict(row.get("reward_breakdown")),
-            )
-        )
-    return records
-
-
-def _parse_per_step(value: Any) -> list[float]:
-    if value is None:
-        return []
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            return []
-    try:
-        return [float(x) for x in value]
-    except (TypeError, ValueError):
-        return []
-
-
-def _parse_json_list(value: Any) -> list[dict[str, Any]]:
-    parsed = _parse_json(value)
-    return parsed if isinstance(parsed, list) else []
-
-
-def _parse_json_dict(value: Any) -> dict[str, Any]:
-    parsed = _parse_json(value)
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _parse_json(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except json.JSONDecodeError:
-            return None
-    return value
+    return read_rollouts(path, str(path), LOAD_COLUMNS)
 
 
 def load_preferences(path: Path) -> list[PreferenceRecord]:
@@ -103,7 +30,7 @@ def load_preferences(path: Path) -> list[PreferenceRecord]:
                 records.append(
                     PreferenceRecord(
                         task=str(obj.get("task", "")),
-                        env_name=str(obj.get("env_name") or _environment_of(_prompt_of(obj["chosen"]))),
+                        env_name=str(obj.get("env_name") or environment_of(_prompt_of(obj["chosen"]))),
                         prompt=_prompt_of(obj["chosen"]),
                         chosen=_assistant_of(obj["chosen"]),
                         rejected=_assistant_of(obj["rejected"]),
@@ -134,14 +61,6 @@ def _assistant_of(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _environment_of(prompt: str) -> str:
-    """Read the environment marker if present."""
-    for line in prompt.splitlines():
-        if line.startswith("Environment:"):
-            return line.partition(":")[2].strip()
-    return ""
-
-
 def load_sft(path_or_dir: Path) -> list[SFTRecord]:
     """Load demonstrations from a Forge export directory, or any file the universal reader accepts."""
     path = Path(path_or_dir)
@@ -158,15 +77,7 @@ def load_sft(path_or_dir: Path) -> list[SFTRecord]:
 
 def _sft_source(directory: Path) -> Path | None:
     """The export in `directory` to read demonstrations from, by priority."""
-    candidates = [
-        directory / "sft_pairs.jsonl",
-        directory / "sft_dataset.jsonl",
-        directory / "sft_data.jsonl",
-        directory / "batch_export.json",
-        directory / "tasks.json",
-        directory / "preference_pairs.jsonl",
-        directory / "grpo_rollouts.parquet",
-    ]
+    candidates = [directory / name for name in FORGE_TRAINING_PRIORITY]
     target_file = next((c for c in candidates if c.exists()), None)
     if target_file is None:
         target_file = next(iter(directory.glob("*.jsonl")), next(iter(directory.glob("*.json")), None))
@@ -266,7 +177,7 @@ def sft_records(records: list[DatasetRecord]) -> list[SFTRecord]:
             SFTRecord(
                 prompt=prompt,
                 completion=completion,
-                env_name=str(meta.get("env_name") or _environment_of(prompt)),
+                env_name=str(meta.get("env_name") or environment_of(prompt)),
                 reward=_reward_of(meta),
             )
         )

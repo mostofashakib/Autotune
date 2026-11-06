@@ -49,7 +49,7 @@ def _metrics_for(
 ) -> EnvQualityMetrics:
     steps = [step for episode in episodes for step in episode.get("steps", [])]
     endpoints = [endpoint for step in steps if (endpoint := _endpoint(step))]
-    rewarded = sum(1 for step in steps if step.get("reward", 0.0) > 0)
+    rewarded = sum(1 for step in steps if _is_rewarded(step))
     dead_ends = sum(1 for rollout in rollouts if rollout.termination_reason == "dead_end")
     return EnvQualityMetrics(
         env_name=env_name,
@@ -60,6 +60,11 @@ def _metrics_for(
         num_episodes=_episode_count(episodes, rollouts),
         num_steps=len(steps),
     )
+
+
+def _is_rewarded(step: dict[str, Any]) -> bool:
+    reward = step.get("reward")
+    return isinstance(reward, int | float) and not isinstance(reward, bool) and reward > 0
 
 
 def _endpoint(step: dict[str, Any]) -> str | None:

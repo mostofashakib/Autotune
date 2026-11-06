@@ -10,7 +10,7 @@ from autotune.core.domain.limits import MAX_FILE_BYTES, MAX_UPLOAD_BYTES
 from autotune.core.domain.models import CleanedDataset, DatasetRecord, EnvQualityMetrics, TaskType
 from autotune.core.ports.sanitizer import IngestionError
 from autotune.infrastructure.sanitizers.document_text import DOCUMENT_SUFFIXES, extract_text
-from autotune.infrastructure.sanitizers.export_quality import environment_quality, is_trajectories
+from autotune.infrastructure.sanitizers.export_quality import FORGE_FILES, FORGE_TRAINING_PRIORITY, environment_quality, is_trajectories
 from autotune.infrastructure.sanitizers.format_normalizer import STRUCTURED_SUFFIXES, normalize_file, tail_split
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,11 @@ def collect_sources(path: Path) -> Sources:
         return _merge([_read_file(path.name, data, in_archive=False)], [], [(path.name, data)])
     members, warnings = _archive_members(path)
     parts = []
+    skipped, bundle_warning = _forge_bundle_skips(members)
+    warnings.extend(bundle_warning)
     for name, data in members:
+        if name in skipped:
+            continue
         try:
             parts.append(_read_file(name, data, in_archive=True))
         except IngestionError as exc:
@@ -53,6 +57,20 @@ def collect_sources(path: Path) -> Sources:
     if not parts:
         raise IngestionError(f"No usable files in {path.name}. " + " ".join(warnings))
     return _merge(parts, warnings, members)
+
+
+def _forge_bundle_skips(members: list[tuple[str, bytes]]) -> tuple[set[str], list[str]]:
+    """A Forge bundle holds several exports of one run. Train on the first by priority and skip the rest."""
+    present = {PurePosixPath(name).name.lower() for name, _ in members} & FORGE_FILES
+    if len(present) < 2:
+        return set(), []
+    trainable = [name for name in FORGE_TRAINING_PRIORITY if name in present]
+    if len(trainable) < 2:
+        return set(), []
+    chosen, others = trainable[0], trainable[1:]
+    skipped = {name for name, _ in members if PurePosixPath(name).name.lower() in others}
+    listed = others[0] if len(others) == 1 else ", ".join(others[:-1]) + " and " + others[-1]
+    return skipped, [f"Trained on {chosen} from this Forge bundle. Skipped {listed} for training. Upload one of them alone to train on it."]
 
 
 def _archive_members(path: Path) -> tuple[list[tuple[str, bytes]], list[str]]:

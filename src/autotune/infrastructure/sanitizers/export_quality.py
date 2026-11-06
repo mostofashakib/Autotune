@@ -6,13 +6,18 @@ import json
 from pathlib import PurePosixPath
 from typing import Any
 
-import pandas as pd
-
 from autotune.core.domain.models import EnvQualityMetrics, RolloutRecord
 from autotune.infrastructure.evaluators.env_quality import compute_env_quality
+from autotune.infrastructure.sanitizers.rollout_rows import QUALITY_COLUMNS, read_rollouts
 
 TRAJECTORIES_FILE = "trajectories.jsonl"
 ROLLOUTS_FILE = "grpo_rollouts.parquet"
+# Which Forge export trains first when several are present.
+FORGE_TRAINING_PRIORITY = (
+    "sft_pairs.jsonl", "sft_dataset.jsonl", "sft_data.jsonl", "batch_export.json", "tasks.json",
+    "preference_pairs.jsonl", ROLLOUTS_FILE,
+)
+FORGE_FILES = frozenset({*FORGE_TRAINING_PRIORITY, TRAJECTORIES_FILE})
 
 
 def is_trajectories(name: str) -> bool:
@@ -60,14 +65,4 @@ def _read_trajectories(data: bytes) -> tuple[list[dict[str, Any]], int]:
 
 
 def _read_rollouts(data: bytes) -> list[RolloutRecord]:
-    frame = pd.read_parquet(io.BytesIO(data))
-    if "episode_id" not in frame.columns:
-        raise ValueError("no episode_id column")
-    return [
-        RolloutRecord(
-            episode_id=str(row["episode_id"]),
-            env_name=str(row.get("env_name") or ""),
-            termination_reason=str(row.get("termination_reason") or "unknown"),
-        )
-        for row in frame.to_dict("records")
-    ]
+    return read_rollouts(io.BytesIO(data), ROLLOUTS_FILE, QUALITY_COLUMNS)

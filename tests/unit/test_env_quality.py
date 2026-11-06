@@ -81,3 +81,9 @@ def test_env_quality_ignores_steps_without_an_endpoint():
 
 def test_env_quality_with_no_input_is_empty():
     assert compute_env_quality([], []) == []
+
+
+def test_env_quality_counts_only_numeric_positive_rewards():
+    trajectories = [episode("e1", "mail", ["/a", "/b", "/c", "/d", "/e"], [None, "1.0", True, 0.5, -1.0])]
+    [metrics] = compute_env_quality(trajectories, [])
+    assert metrics.reward_density == 0.2
