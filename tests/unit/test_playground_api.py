@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from autotune.infrastructure.evaluators.openai_client import ModelCallError
 from autotune.presentation.api import app as api
+from autotune.presentation.api.routes import serving
 
 ENDPOINT = {"base_url": "http://localhost:11434/v1", "model": "gemma3:1b"}
 
@@ -29,7 +30,7 @@ def client():
 
 def test_the_playground_returns_the_models_answer(client, monkeypatch):
     fake = FakeClient("4")
-    monkeypatch.setattr(api, "OpenAIChatClient", lambda: fake)
+    monkeypatch.setattr(serving, "OpenAIChatClient", lambda: fake)
 
     response = client.post("/api/playground/generate", json={"prompt": "2+2?", "model": ENDPOINT})
 
@@ -39,7 +40,7 @@ def test_the_playground_returns_the_models_answer(client, monkeypatch):
 
 
 def test_a_model_that_does_not_answer_is_reported(client, monkeypatch):
-    monkeypatch.setattr(api, "OpenAIChatClient", lambda: FakeClient(error=ModelCallError("gemma3:1b at http://localhost:11434/v1 did not answer")))
+    monkeypatch.setattr(serving, "OpenAIChatClient", lambda: FakeClient(error=ModelCallError("gemma3:1b at http://localhost:11434/v1 did not answer")))
 
     response = client.post("/api/playground/generate", json={"prompt": "hi", "model": ENDPOINT})
 

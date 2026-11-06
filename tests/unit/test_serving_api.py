@@ -1,11 +1,15 @@
 """The serving API starts vLLM for real and reports its actual state."""
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
 from autotune.core.domain.models import ServingEndpoint, ServingStatus
 from autotune.presentation.api import app as api
+from autotune.presentation.api.state import ServingSlot
 
 
 class FakeVLLM:
@@ -27,8 +31,7 @@ class FakeVLLM:
 
 
 @pytest.fixture
-def client(monkeypatch):
-    monkeypatch.setattr(api, "_ACTIVE_SERVING", None)
+def client():
     return TestClient(api.create_app())
 
 
@@ -74,3 +77,45 @@ def test_stopping_terminates_the_server(client, monkeypatch):
 
     assert response.status_code == 200
     assert fake.stopped
+
+
+def test_apps_do_not_share_serving(monkeypatch):
+    monkeypatch.setattr(api, "VLLMServingProvider", FakeVLLM)
+    first, second = TestClient(api.create_app()), TestClient(api.create_app())
+
+    first.post("/api/serve/start", json={"model_path": "m"})
+
+    assert first.get("/api/serve/status").json()["status"] == "starting"
+    assert second.get("/api/serve/status").json()["status"] == "stopped"
+
+
+class SlowVLLM(FakeVLLM):
+    """Takes long enough to start that two unguarded starts overlap."""
+
+    def start(self, model_path, model_name="", port=8000, gpu_memory_utilization=0.85, log_path=None):
+        time.sleep(0.05)
+        return super().start(model_path, model_name, port, gpu_memory_utilization, log_path)
+
+
+def test_concurrent_serving_starts_leave_one_process():
+    providers: list[SlowVLLM] = []
+
+    def build() -> SlowVLLM:
+        providers.append(SlowVLLM())
+        return providers[-1]
+
+    slot = ServingSlot(build)
+    barrier = threading.Barrier(2)
+
+    def start() -> None:
+        barrier.wait()
+        slot.start("m", 8000)
+
+    threads = [threading.Thread(target=start) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(5)
+
+    assert len(providers) == 2
+    assert sorted(provider.stopped for provider in providers) == [False, True]

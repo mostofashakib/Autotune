@@ -14,7 +14,7 @@ from typing import Any, Literal, Optional
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from autotune.core.domain.models import (
     JobStatus,
@@ -47,6 +47,9 @@ from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 from autotune.infrastructure.storage.job_store import JobStore
 from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.presentation.api.error_handlers import install_error_handlers
+from autotune.presentation.api.jobs import JobRunner
+from autotune.presentation.api.routes import serving
+from autotune.presentation.api.state import AppState, ServingSlot
 from autotune.presentation.errors import EXPECTED_FAILURES
 from autotune.settings import (
     CREDENTIALS,
@@ -62,9 +65,6 @@ from autotune.settings import (
 )
 
 logger = logging.getLogger(__name__)
-
-_ACTIVE_SERVING: Optional[VLLMServingProvider] = None
-
 
 class TrainingStartRequest(BaseModel):
     dataset_name: str
@@ -211,26 +211,6 @@ def build_benchmark_runner(req: BenchmarkRequest) -> BenchmarkRunner:
     return DatasetBenchmark(load_sft(Path(req.path)), client, req.k, judge=judge, max_tokens=req.max_tokens)
 
 
-class ServingRequest(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
-    model_path: str = "./checkpoints/ui-model"
-    port: int = 8000
-
-
-class PromptGenerationRequest(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
-    prompt: str = Field(min_length=1)
-    # The OpenAI-compatible server to ask, such as the base or the trained model.
-    model: ModelEndpoint
-    max_tokens: int = Field(default=1024, ge=1, le=131072)
-
-    @model_validator(mode="after")
-    def _prompt_has_text(self) -> "PromptGenerationRequest":
-        if not self.prompt.strip():
-            raise ValueError("prompt must contain text")
-        return self
-
-
 class RunPodLaunchRequest(BaseModel):
     gpu_type: str = "NVIDIA GeForce RTX 4090"
     pod_name: str = "autotune-pod"
@@ -262,6 +242,17 @@ def create_app() -> FastAPI:
         description="LLM Post-Training & Benchmarking Dashboard",
         version="0.1.0",
     )
+    # The lambdas read this module's factories when called, so tests can replace them after create_app.
+    app.state.autotune = AppState(
+        store=store,
+        ingestion=JobRunner(store, "ingestion", id_prefix="ingest"),
+        training=JobRunner(store, "training", id_prefix="job"),
+        benchmarks=JobRunner(store, "benchmark", id_prefix="bench"),
+        serving=ServingSlot(lambda: VLLMServingProvider()),
+        build_training_backend=lambda: build_training_backend(),
+        build_hardware_probe=lambda: build_hardware_probe(),
+    )
+    app.include_router(serving.router)
     install_error_handlers(app)
 
     app.add_middleware(
@@ -536,44 +527,5 @@ def create_app() -> FastAPI:
         if record is not None:
             store.save("pod", pod_id, {**record, "status": "TERMINATED"})
         return {"pod_id": pod_id, "status": "TERMINATED"}
-
-    @app.post("/api/serve/start", status_code=202)
-    async def start_vllm_server(req: ServingRequest) -> dict[str, Any]:
-        global _ACTIVE_SERVING
-        if _ACTIVE_SERVING is not None:
-            _ACTIVE_SERVING.stop()
-        provider = VLLMServingProvider()
-        try:
-            endpoint = provider.start(model_path=req.model_path, port=req.port)
-        except RuntimeError as exc:
-            raise HTTPException(status_code=503, detail=str(exc)) from exc
-        _ACTIVE_SERVING = provider
-        return {
-            "status": "starting",
-            "model_path": req.model_path,
-            "port": req.port,
-            "endpoint_url": f"{endpoint.base_url}/v1",
-        }
-
-    @app.get("/api/serve/status")
-    async def serving_status() -> dict[str, Any]:
-        if _ACTIVE_SERVING is None:
-            return {"status": "stopped", "base_url": None, "log_tail": ""}
-        return _ACTIVE_SERVING.state().model_dump()
-
-    @app.post("/api/serve/stop")
-    async def stop_vllm_server() -> dict[str, Any]:
-        global _ACTIVE_SERVING
-        if _ACTIVE_SERVING is not None:
-            _ACTIVE_SERVING.stop()
-            _ACTIVE_SERVING = None
-        return {"status": "stopped"}
-
-    @app.post("/api/playground/generate")
-    def playground_generate(req: PromptGenerationRequest) -> dict[str, str]:
-        answer = OpenAIChatClient().complete(
-            req.model, [{"role": "user", "content": req.prompt.strip()}], max_tokens=req.max_tokens,
-        )
-        return {"response": answer}
 
     return app
