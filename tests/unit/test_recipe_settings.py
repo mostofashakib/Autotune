@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from autotune.core.domain.models import Recipe, QuantizationMethod, TrainingObjective
 from autotune.presentation.api import app as api
+from autotune.presentation.api.routes import training
 
 
 def recipe(**kwargs):
@@ -85,7 +86,7 @@ def test_selector_uses_qlora_when_lora_activations_do_not_fit():
 
 
 def test_uppercase_objective_stays_compatible():
-    assert api.TrainingStartRequest(dataset_name='x', objective='SFT').objective == TrainingObjective.SFT
+    assert training.TrainingStartRequest(dataset_name='x', objective='SFT').objective == TrainingObjective.SFT
 
 
 def test_dpo_rejects_non_preference_rows_before_start(tmp_path, monkeypatch):

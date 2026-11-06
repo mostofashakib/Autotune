@@ -14,6 +14,13 @@ from autotune.presentation.errors import EXPECTED_FAILURES
 
 logger = logging.getLogger(__name__)
 
+# The run list leaves out what only the detail view needs.
+_DETAIL_KEYS = {"logs", "loss_history", "report"}
+
+
+def summary(record: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in record.items() if key not in _DETAIL_KEYS}
+
 
 class JobHandle:
     """What a unit of work sees: update fields and append log lines on its own job."""

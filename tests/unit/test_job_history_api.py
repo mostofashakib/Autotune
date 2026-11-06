@@ -100,6 +100,11 @@ def test_a_run_cut_off_by_a_restart_shows_as_interrupted(monkeypatch, dataset, t
     monkeypatch.setattr(api, "build_training_backend", lambda: FakeBackend(release))
     first = TestClient(api.create_app())
     job_id = _train(first, dataset, tmp_path)
+    # Restart only once the first worker has logged its step and blocks, so it cannot save over the restart.
+    for _ in range(300):
+        if any("Step 1/2" in line for line in first.get(f"/api/training/status/{job_id}").json()["logs"]):
+            break
+        time.sleep(0.01)
 
     body = TestClient(api.create_app()).get(f"/api/training/status/{job_id}").json()
     release.set()
