@@ -28,7 +28,3 @@ class ServingProvider(Protocol):
     def is_healthy(self, base_url: str) -> bool:
         """Check if server is responding to health checks."""
         ...
-
-    def generate(self, prompt: str, base_url: str, max_tokens: int = 512, temperature: float = 0.7) -> str:
-        """Send completion request to served model."""
-        ...

@@ -1,7 +1,5 @@
-import json
 from pathlib import Path
 from unittest.mock import MagicMock
-import pytest
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 
 
@@ -43,24 +41,3 @@ def test_vllm_is_healthy():
 
     unhealthy_provider = VLLMServingProvider(request_fn=failing_http)
     assert unhealthy_provider.is_healthy("http://127.0.0.1:8000") is False
-
-
-def test_vllm_generate_success():
-    def mock_http(method: str, url: str, headers: dict, body: bytes | None):
-        response_payload = {
-            "choices": [{"text": " 42 is the answer."}]
-        }
-        return 200, json.dumps(response_payload).encode("utf-8")
-
-    provider = VLLMServingProvider(request_fn=mock_http)
-    result = provider.generate("What is 6 * 7?", "http://127.0.0.1:8000")
-    assert "42 is the answer" in result
-
-
-def test_vllm_generate_error_handling():
-    def failing_http(method: str, url: str, headers: dict, body: bytes | None):
-        return 500, b"Internal vLLM Error"
-
-    provider = VLLMServingProvider(request_fn=failing_http)
-    with pytest.raises(RuntimeError, match="vLLM generate failed with status 500"):
-        provider.generate("Hello", "http://127.0.0.1:8000")

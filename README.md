@@ -33,7 +33,7 @@ autotune/
 │   ├── ports/           # Interface protocols (DataSanitizer, TrainingBackend, ServingProvider, CloudComputeProvider)
 │   └── services/        # Hardware-aware AutoRecipeSelector (LoRA vs QLoRA, memory fitting, GRPO/DPO)
 ├── infrastructure/
-│   ├── backends/        # TrlPeftBackend and reward mapping (GRPO, DPO, SFT)
+│   ├── backends/        # TrlPeftBackend (SFT, DPO, GRPO)
 │   ├── sanitizers/      # AutoFormatSanitizer, DocumentIngestor, and dataset loaders
 │   ├── models/          # Hub metadata resolution for custom Hugging Face models
 │   ├── storage/         # PolicyCheckpoint serialization and SQLite JobStore

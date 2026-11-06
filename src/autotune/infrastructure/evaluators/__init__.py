@@ -8,11 +8,9 @@ from autotune.infrastructure.evaluators.metrics import (
     robustness,
 )
 from autotune.infrastructure.evaluators.report import write_env_quality
-from autotune.infrastructure.evaluators.task_suite import Task
 
 __all__ = [
     "EnvQualityMetrics",
-    "Task",
     "TaskTrial",
     "compute_cohens_kappa",
     "compute_env_quality",

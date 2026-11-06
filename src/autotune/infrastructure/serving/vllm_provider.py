@@ -1,7 +1,6 @@
 """vLLM Serving Provider adapter implementation."""
 from __future__ import annotations
 
-import json
 import logging
 import os
 import subprocess
@@ -162,42 +161,3 @@ class VLLMServingProvider(ServingProvider):
             return status_code == 200
         except Exception:
             return False
-
-    def generate(
-        self,
-        prompt: str,
-        base_url: str,
-        max_tokens: int = 512,
-        temperature: float = 0.7,
-    ) -> str:
-        """
-        Generate completion via OpenAI-compatible completions API endpoint.
-
-        Args:
-            prompt: Text prompt to complete.
-            base_url: Base endpoint URL.
-            max_tokens: Maximum tokens to generate.
-            temperature: Sampling temperature.
-
-        Returns:
-            Generated response string.
-        """
-        api_url = f"{base_url.rstrip('/')}/v1/completions"
-        payload = {
-            "model": self._current_endpoint.model_name if self._current_endpoint else "default",
-            "prompt": prompt,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-        }
-        headers = {"Content-Type": "application/json"}
-        body_bytes = json.dumps(payload).encode("utf-8")
-
-        status_code, resp_bytes = self._request_fn("POST", api_url, headers=headers, body=body_bytes)
-        if status_code != 200:
-            raise ProviderError(f"vLLM generate failed with status {status_code}: {resp_bytes.decode('utf-8', errors='ignore')}")
-
-        parsed = json.loads(resp_bytes.decode("utf-8"))
-        choices = parsed.get("choices", [])
-        if choices and "text" in choices[0]:
-            return choices[0]["text"]
-        return ""
