@@ -33,3 +33,12 @@ def test_serve_prints_the_real_api_url(monkeypatch):
     assert result.exit_code == 0, result.output
     assert "http://127.0.0.1:9001/v1" in result.output
     assert "{port}" not in result.output
+
+
+def test_export_gguf_reports_a_missing_llama_cpp_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("LLAMA_CPP_DIR", "")
+
+    result = CliRunner().invoke(app, ["export-gguf", str(tmp_path), "--output", str(tmp_path / "m.gguf")])
+
+    assert result.exit_code == 1
+    assert "Set LLAMA_CPP_DIR to a llama.cpp checkout" in result.output

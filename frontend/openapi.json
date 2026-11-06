@@ -440,6 +440,66 @@
         "title": "CredentialStatus",
         "type": "object"
       },
+      "GgufExport": {
+        "properties": {
+          "checkpoint_dir": {
+            "title": "Checkpoint Dir",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "gguf_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gguf Path"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Logs",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "created_at",
+          "checkpoint_dir",
+          "gguf_path",
+          "error",
+          "logs"
+        ],
+        "title": "GgufExport",
+        "type": "object"
+      },
       "Gpu": {
         "properties": {
           "community_price": {
@@ -2251,6 +2311,45 @@
         "summary": "Upload Dataset"
       }
     },
+    "/api/exports/{export_id}": {
+      "get": {
+        "operationId": "get_export_api_exports__export_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GgufExport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Export"
+      }
+    },
     "/api/models": {
       "get": {
         "operationId": "models_api_models_get",
@@ -2628,6 +2727,45 @@
           }
         },
         "summary": "Get Training Status"
+      }
+    },
+    "/api/training/{job_id}/export-gguf": {
+      "post": {
+        "operationId": "export_gguf_api_training__job_id__export_gguf_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStarted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Gguf"
       }
     }
   }

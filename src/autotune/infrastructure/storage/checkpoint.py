@@ -18,7 +18,9 @@ class PolicyCheckpoint(BaseModel):
     base_model: str
     model_path: str  # what the runtime agent serves (local path or served name)
     num_examples: int
-    mean_reward: float
+    mean_reward: float | None = None
+    final_loss: float | None = None
+    global_step: int = 0
     created_at: str = ""
     experiment_config: dict[str, Any] = Field(default_factory=dict)
     train_envs: list[str] = Field(default_factory=list)
@@ -29,10 +31,9 @@ class PolicyCheckpoint(BaseModel):
         """Serialize checkpoint manifest to target directory."""
         target = Path(out_dir)
         target.mkdir(parents=True, exist_ok=True)
-        if not self.created_at:
-            self.created_at = datetime.now(timezone.utc).isoformat()
+        stamped = self if self.created_at else self.model_copy(update={"created_at": datetime.now(timezone.utc).isoformat()})
         manifest_path = target / MANIFEST_NAME
-        manifest_path.write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        manifest_path.write_text(stamped.model_dump_json(indent=2), encoding="utf-8")
         return manifest_path
 
     @classmethod

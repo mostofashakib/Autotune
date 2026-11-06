@@ -10,6 +10,7 @@ from fastapi import Depends, Request
 
 from autotune.core.domain.models import ServingEndpoint, ServingStatus
 from autotune.core.ports.hardware import HardwareProbe
+from autotune.core.ports.storage import CheckpointStorage
 from autotune.core.ports.serving import ServingProvider
 from autotune.core.ports.trainer import TrainingBackend
 from autotune.core.services.training_planner import TrainingPlanner
@@ -56,6 +57,8 @@ class AppState:
     ingestion: JobRunner
     training: JobRunner
     benchmarks: JobRunner
+    exports: JobRunner
+    checkpoints: CheckpointStorage
     serving: ServingSlot
     build_training_backend: Callable[[], TrainingBackend]
     build_hardware_probe: Callable[[], HardwareProbe]

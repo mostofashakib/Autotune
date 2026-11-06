@@ -7,6 +7,7 @@ import pytest
 from autotune.core.domain.models import CleanedDataset, DatasetRecord, ChatMessage, Recipe, QuantizationMethod, TrainingObjective, TrainingJob, TaskType
 from autotune.infrastructure.backends.grpo_rewards import reference_reward
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
+from autotune.infrastructure.storage.checkpoint import PolicyCheckpoint
 
 
 @pytest.fixture
@@ -78,3 +79,11 @@ def test_no_gpu_fails_before_model_download(tmp_path, runtime, monkeypatch):
     sys.modules['transformers'].AutoModelForCausalLM.from_pretrained = lambda *a, **kw:pytest.fail('must not download')
     with pytest.raises(RuntimeError, match='CUDA GPU'):
         run(tmp_path, TrainingObjective.SFT)
+
+
+def test_trainer_writes_policy_manifest(tmp_path, runtime):
+    run(tmp_path, TrainingObjective.SFT)
+    manifest = PolicyCheckpoint.load(tmp_path / 'out')
+    assert manifest.run_id == 'test' and manifest.final_loss == .2 and manifest.global_step == 1
+    assert manifest.objective == 'sft' and manifest.base_model == 'Qwen/Qwen2.5-1.5B-Instruct'
+    assert not (tmp_path / 'out' / 'autotune_meta.json').exists()

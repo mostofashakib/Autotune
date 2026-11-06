@@ -122,6 +122,16 @@ class TrainingCancelling(BaseModel):
     status: Literal["cancelling"]
 
 
+class GgufExport(BaseModel):
+    job_id: str
+    status: str
+    created_at: str
+    checkpoint_dir: str
+    gguf_path: str | None
+    error: str | None
+    logs: list[str]
+
+
 class Headline(BaseModel):
     base_pass_at_1: float
     trained_pass_at_1: float

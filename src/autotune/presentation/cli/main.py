@@ -26,6 +26,7 @@ from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark
 from autotune.infrastructure.evaluators.judge import LLMJudge
 from autotune.infrastructure.evaluators.openai_client import OpenAIChatClient
 from autotune.infrastructure.sanitizers.dataset_loader import load_sft
+from autotune.infrastructure.storage.local_checkpoints import LocalCheckpointStorage
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 from autotune.presentation.api.dataset_ingestion import load_dataset
 from autotune.presentation.errors import EXPECTED_FAILURES
@@ -182,6 +183,20 @@ def serve(
     except EXPECTED_FAILURES as exc:
         console.print(f"[red]Failed to start vLLM serving engine:[/] {exc}")
         raise typer.Exit(code=1) from exc
+
+
+@app.command("export-gguf")
+def export_gguf(
+    checkpoint_dir: Path = typer.Argument(..., help="Checkpoint directory holding the LoRA adapter"),
+    output: Path = typer.Option(..., "--output", "-o", help="GGUF file to write"),
+) -> None:
+    """Merge the adapter into its base model and convert it to GGUF with llama.cpp."""
+    try:
+        written = LocalCheckpointStorage().export_gguf(checkpoint_dir, output)
+    except EXPECTED_FAILURES as exc:
+        console.print(f"[red]Failed to export GGUF:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[bold green]✓ GGUF written to:[/] {written}")
 
 
 BaseUrl = typer.Option(..., "--base-url", help="OpenAI-compatible URL serving the base model")

@@ -161,6 +161,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/exports/{export_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Export */
+        get: operations["get_export_api_exports__export_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/models": {
         parameters: {
             query?: never;
@@ -365,6 +382,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/{job_id}/export-gguf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Export Gguf */
+        post: operations["export_gguf_api_training__job_id__export_gguf_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -525,6 +559,23 @@ export interface components {
             name: string;
             /** Purpose */
             purpose: string;
+        };
+        /** GgufExport */
+        GgufExport: {
+            /** Checkpoint Dir */
+            checkpoint_dir: string;
+            /** Created At */
+            created_at: string;
+            /** Error */
+            error: string | null;
+            /** Gguf Path */
+            gguf_path: string | null;
+            /** Job Id */
+            job_id: string;
+            /** Logs */
+            logs: string[];
+            /** Status */
+            status: string;
         };
         /** Gpu */
         Gpu: {
@@ -1346,6 +1397,37 @@ export interface operations {
             };
         };
     };
+    get_export_api_exports__export_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                export_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GgufExport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     models_api_models_get: {
         parameters: {
             query?: {
@@ -1658,6 +1740,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrainingRun"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_gguf_api_training__job_id__export_gguf_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStarted"];
                 };
             };
             /** @description Validation Error */

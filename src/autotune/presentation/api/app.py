@@ -10,9 +10,10 @@ from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.hardware.cuda_probe import CudaProbe
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 from autotune.infrastructure.storage.job_store import JobStore
+from autotune.infrastructure.storage.local_checkpoints import LocalCheckpointStorage
 from autotune.presentation.api.error_handlers import install_error_handlers
 from autotune.presentation.api.jobs import JobRunner
-from autotune.presentation.api.routes import benchmarks, cloud, datasets, serving, system, training
+from autotune.presentation.api.routes import benchmarks, checkpoints, cloud, datasets, serving, system, training
 from autotune.presentation.api.state import AppState, ServingSlot
 from autotune.settings import data_dir, export_configured_credentials, ui_origin
 
@@ -31,7 +32,7 @@ def create_app() -> FastAPI:
     """Create and configure FastAPI application."""
     export_configured_credentials()
     store = JobStore(data_dir() / "autotune.db")
-    for kind in ("training", "benchmark", "ingestion"):
+    for kind in ("training", "benchmark", "ingestion", "export"):
         store.mark_interrupted(kind)
 
     app = FastAPI(
@@ -45,11 +46,13 @@ def create_app() -> FastAPI:
         ingestion=JobRunner(store, "ingestion", id_prefix="ingest"),
         training=JobRunner(store, "training", id_prefix="job"),
         benchmarks=JobRunner(store, "benchmark", id_prefix="bench"),
+        exports=JobRunner(store, "export", id_prefix="export"),
+        checkpoints=LocalCheckpointStorage(),
         serving=ServingSlot(lambda: VLLMServingProvider()),
         build_training_backend=lambda: build_training_backend(),
         build_hardware_probe=lambda: build_hardware_probe(),
     )
-    for router in (system.router, datasets.router, training.router, benchmarks.router, cloud.router, serving.router):
+    for router in (system.router, datasets.router, training.router, checkpoints.router, benchmarks.router, cloud.router, serving.router):
         app.include_router(router)
     install_error_handlers(app)
 

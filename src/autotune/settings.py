@@ -122,3 +122,11 @@ def endpoint_api_key(endpoint: ModelEndpoint) -> str | None:
     if not key:
         raise EndpointKeyMissing(f"{endpoint.api_key_env} is not set, and {endpoint.model} needs it as its API key")
     return key
+
+
+def llama_cpp_dir() -> Path:
+    """The llama.cpp checkout that converts checkpoints to GGUF (LLAMA_CPP_DIR)."""
+    configured = setting_value("LLAMA_CPP_DIR")
+    if not configured or not (Path(configured) / "convert_hf_to_gguf.py").is_file():
+        raise ValueError("Set LLAMA_CPP_DIR to a llama.cpp checkout to export GGUF files.")
+    return Path(configured)

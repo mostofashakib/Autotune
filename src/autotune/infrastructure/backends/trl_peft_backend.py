@@ -1,7 +1,6 @@
 """Production training backend supporting LoRA and 4-bit QLoRA via TRL and PEFT."""
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -18,8 +17,11 @@ from autotune.core.domain.models import (
 )
 from autotune.core.domain.errors import MissingExtraError
 from autotune.core.domain.training_settings import validate_rows_for
+from autotune.core.ports.storage import CheckpointStorage
 from autotune.core.ports.trainer import ProgressCallback, TrainingBackend
 from autotune.infrastructure.backends.grpo_rewards import grpo_rows, reference_reward
+from autotune.infrastructure.storage.checkpoint import PolicyCheckpoint
+from autotune.infrastructure.storage.local_checkpoints import TRAINING_EXTRA_MESSAGE, LocalCheckpointStorage
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,8 @@ logger = logging.getLogger(__name__)
 class TrlPeftBackend(TrainingBackend):
     """Executes SFT and DPO training using Hugging Face TRL, PEFT, and bitsandbytes."""
 
-    def __init__(self) -> None:
+    def __init__(self, storage: CheckpointStorage | None = None) -> None:
+        self._storage = storage or LocalCheckpointStorage()
         self._active_trainers: dict[str, Any] = {}
         self._cancelled: set[str] = set()
 
@@ -39,9 +42,7 @@ class TrlPeftBackend(TrainingBackend):
             from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
         except ImportError as exc:
-            raise MissingExtraError(
-                "Training dependencies missing. Install via `pip install 'autotune[training]'`."
-            ) from exc
+            raise MissingExtraError(TRAINING_EXTRA_MESSAGE) from exc
 
         if not torch.cuda.is_available():
             raise RuntimeError("Training requires a CUDA GPU. Run on a supported GPU host or rent a cloud GPU.")
@@ -184,15 +185,12 @@ class TrlPeftBackend(TrainingBackend):
         model.save_pretrained(str(out_dir))
         tokenizer.save_pretrained(str(out_dir))
 
-        meta = {
-            "job_id": job.id,
-            "base_model": recipe.base_model,
-            "quantization": recipe.quantization.value,
-            "train_samples": len(dataset.train_records),
-            "final_loss": train_output.training_loss,
-            "global_step": train_output.global_step,
-        }
-        (out_dir / "autotune_meta.json").write_text(json.dumps(meta, indent=2))
+        PolicyCheckpoint(
+            objective=recipe.objective.value, base_model=recipe.base_model, model_path=str(out_dir),
+            num_examples=len(dataset.train_records), final_loss=train_output.training_loss,
+            global_step=train_output.global_step, run_id=job.id, experiment_config=recipe.model_dump(mode="json"),
+        ).save(out_dir)
+        self._storage.save(job.id, out_dir, out_dir)
 
         return CheckpointResult(
             job_id=job.id,

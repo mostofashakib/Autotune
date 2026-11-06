@@ -62,6 +62,7 @@ cp .env.example .env   # then replace the mock_key placeholders you need
 | `HF_TOKEN` | Downloading gated Hugging Face base models such as `meta-llama/*` |
 | `AUTOTUNE_DOCUMENT_MODEL` | Generator model name for document ingestion (e.g. `gemma3:1b`, `qwen2.5:7b`) |
 | `AUTOTUNE_DOCUMENT_ENDPOINT` | Generator endpoint (default: `http://localhost:11434/v1` for local Ollama) |
+| `LLAMA_CPP_DIR` | Path to a llama.cpp checkout, used by `autotune export-gguf` and the GGUF export route |
 | `AUTOTUNE_DOCUMENT_API_KEY_ENV` | Optional env var holding the API key for authenticated generator endpoints |
 
 A value set in the environment wins over `.env`. A credential left at `mock_key` counts as not configured, so the feature that needs it refuses to run and names the variable. Model servers for benchmarks and the playground take their keys from env vars you name per run (`--base-key-env`, `--trained-key-env`, `--judge-key-env`).

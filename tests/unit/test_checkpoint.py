@@ -24,3 +24,9 @@ def test_checkpoint_save_load_round_trip(tmp_path):
 def test_load_missing_checkpoint_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         PolicyCheckpoint.load(tmp_path)
+
+
+def test_manifest_save_does_not_mutate(tmp_path):
+    ckpt = PolicyCheckpoint(objective="sft", base_model="m", model_path="p", num_examples=1)
+    ckpt.save(tmp_path)
+    assert ckpt.created_at == ""
