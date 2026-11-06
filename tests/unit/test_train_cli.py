@@ -8,6 +8,8 @@ import pytest
 from typer.testing import CliRunner
 
 from autotune.core.domain.models import JobStatus
+from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
+from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 from autotune.presentation.cli import main
 from autotune.presentation.cli.main import app
 
@@ -97,3 +99,55 @@ def test_cli_unexpected_error_is_not_swallowed(cli, sft_file):
     result = cli.invoke(main.app, ["train", str(sft_file), "--base-model", OPEN_MODEL])
 
     assert isinstance(result.exception, KeyError)
+
+
+def test_cli_train_passes_objective_and_quantization_to_the_backend(cli, tmp_path):
+    preferences = tmp_path / "prefs.jsonl"
+    preferences.write_text("".join(
+        json.dumps({"prompt": f"question {i}", "chosen": f"good {i}", "rejected": f"bad {i}"}) + "\n" for i in range(100)))
+    result = cli.invoke(main.app, ["train", str(preferences), "--base-model", OPEN_MODEL,
+                                   "--objective", "dpo", "--quantization", "lora_16bit"])
+
+    assert result.exit_code == 0, result.output
+    recipe = RecordingBackend.jobs[0].recipe
+    assert recipe.objective.value == "dpo"
+    assert recipe.quantization.value == "lora_16bit"
+
+
+def test_cli_train_on_raw_text_without_a_document_model_names_the_setting(cli, tmp_path, monkeypatch):
+    monkeypatch.delenv("AUTOTUNE_DOCUMENT_MODEL", raising=False)
+    monkeypatch.setattr("autotune.settings._env_file_values", lambda: {})
+    notes = tmp_path / "notes.txt"
+    notes.write_text("Some raw text about a topic.\n" * 20)
+
+    result = cli.invoke(main.app, ["train", str(notes)])
+
+    assert result.exit_code == 1
+    assert "AUTOTUNE_DOCUMENT_MODEL" in result.output
+
+
+def test_cli_list_gpus_prints_a_provider_failure_without_a_traceback(cli, monkeypatch):
+    monkeypatch.setenv("RUNPOD_API_KEY", "key")
+    monkeypatch.setattr(
+        main, "RunPodCloudProvider",
+        lambda api_key=None: RunPodCloudProvider(api_key=api_key, request_fn=lambda *a, **k: (500, b"upstream down")),
+    )
+
+    result = cli.invoke(main.app, ["cloud", "list-gpus"])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "upstream down" in result.output
+
+
+def test_cli_serve_prints_a_spawn_failure(cli, tmp_path, monkeypatch):
+    def failing_runner(*args, **kwargs):
+        raise OSError("no vllm")
+
+    monkeypatch.setattr(main, "VLLMServingProvider", lambda: VLLMServingProvider(process_runner=failing_runner))
+
+    result = cli.invoke(main.app, ["serve", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "Failed to start vLLM serving engine" in result.output

@@ -69,9 +69,13 @@ def inspect(
     """Inspect dataset and display auto-detected training recipe."""
     try:
         dataset = load_dataset(dataset_path)
-        recipe = _planner().recommend(dataset, TrainingRequest()).recipe
     except EXPECTED_FAILURES as exc:
         console.print(f"[red]Error reading dataset:[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    try:
+        recipe = _planner().recommend(dataset, TrainingRequest()).recipe
+    except EXPECTED_FAILURES as exc:
+        console.print(f"[red]Error recommending a recipe:[/] {exc}")
         raise typer.Exit(code=1) from exc
 
     # Dataset Summary Table

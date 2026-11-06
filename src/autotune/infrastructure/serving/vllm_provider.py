@@ -10,6 +10,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Callable
 
+from autotune.core.domain.errors import ProviderError
 from autotune.core.domain.models import ServingEndpoint, ServingStatus
 from autotune.core.ports.serving import ServingProvider
 from autotune.infrastructure.http import http_request
@@ -91,7 +92,7 @@ class VLLMServingProvider(ServingProvider):
         except Exception as e:
             self._log_file.close()
             logger.error("Failed to start vLLM process: %s", e)
-            raise RuntimeError(f"Could not spawn vLLM server: {e}") from e
+            raise ProviderError(f"Could not spawn vLLM server: {e}") from e
 
         endpoint = ServingEndpoint(
             model_name=resolved_name,
@@ -193,7 +194,7 @@ class VLLMServingProvider(ServingProvider):
 
         status_code, resp_bytes = self._request_fn("POST", api_url, headers=headers, body=body_bytes)
         if status_code != 200:
-            raise RuntimeError(f"vLLM generate failed with status {status_code}: {resp_bytes.decode('utf-8', errors='ignore')}")
+            raise ProviderError(f"vLLM generate failed with status {status_code}: {resp_bytes.decode('utf-8', errors='ignore')}")
 
         parsed = json.loads(resp_bytes.decode("utf-8"))
         choices = parsed.get("choices", [])

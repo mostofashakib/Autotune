@@ -6,6 +6,7 @@ import logging
 from functools import partial
 from typing import Any, Callable
 
+from autotune.core.domain.errors import ProviderError
 from autotune.core.domain.models import RunPodConfig, RunPodInstance
 from autotune.core.ports.cloud import CloudComputeProvider
 from autotune.infrastructure.http import http_request
@@ -77,7 +78,7 @@ class RunPodCloudProvider(CloudComputeProvider):
         pod_data = data.get("data", {}).get("podFindAndDeployOnDemand")
         if not pod_data:
             errors = data.get("errors", [])
-            raise RuntimeError(f"RunPod instance creation failed: {errors}")
+            raise ProviderError(f"RunPod instance creation failed: {errors}")
 
         return RunPodInstance(
             pod_id=pod_data["id"],
@@ -127,7 +128,7 @@ class RunPodCloudProvider(CloudComputeProvider):
         pod_data = data.get("data", {}).get("pod")
         if not pod_data:
             errors = data.get("errors", [])
-            raise RuntimeError(f"Could not retrieve pod '{pod_id}': {errors}")
+            raise ProviderError(f"Could not retrieve pod '{pod_id}': {errors}")
 
         ssh_ip: str | None = None
         ssh_port: int | None = None
@@ -225,8 +226,8 @@ class RunPodCloudProvider(CloudComputeProvider):
             body=body_bytes,
         )
         if status_code != 200:
-            raise RuntimeError(f"RunPod API returned status {status_code}: {resp_bytes.decode('utf-8', errors='ignore')}")
+            raise ProviderError(f"RunPod API returned status {status_code}: {resp_bytes.decode('utf-8', errors='ignore')}")
         payload = json.loads(resp_bytes.decode("utf-8"))
         if payload.get("errors"):
-            raise RuntimeError(f"RunPod GraphQL error: {payload['errors']}")
+            raise ProviderError(f"RunPod GraphQL error: {payload['errors']}")
         return payload
