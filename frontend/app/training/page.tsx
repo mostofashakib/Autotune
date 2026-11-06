@@ -118,7 +118,7 @@ export default function TrainingPage() {
               <input
                 className="input"
                 type="file"
-                accept=".jsonl,.json,.csv,.tsv,.parquet,.pq,.pdf,.docx,.txt,.md,.html,.zip"
+                accept=".jsonl,.json,.csv,.tsv,.parquet,.pq,.pdf,.docx,.txt,.md,.html,.htm,.zip"
                 disabled={busy !== null}
                 onChange={(event) => {
                   const file = event.target.files?.[0];

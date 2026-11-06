@@ -7,23 +7,24 @@ from collections.abc import Callable
 from pathlib import Path
 
 from autotune.core.domain.models import CleanedDataset
-from autotune.infrastructure.sanitizers.document_ingestor import DOCUMENT_SUFFIXES, DocumentIngestor, DocumentOptions
-from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
+from autotune.infrastructure.sanitizers.document_ingestor import DocumentIngestor, DocumentOptions
+from autotune.infrastructure.sanitizers.sources import assemble_dataset, collect_sources
 from autotune.settings import document_endpoint, setting_value
 
 
 def load_dataset(path: Path, on_progress: Callable[[dict[str, int]], None] | None = None) -> CleanedDataset:
-    """Reuse generated records only when their source bytes have not changed."""
-    if path.suffix.lower() not in DOCUMENT_SUFFIXES:
-        return AutoFormatSanitizer().sanitize(path)
+    """Read any upload. Generate pairs only for raw text, reusing them while the source bytes are unchanged."""
     cache = path.with_name(path.name + ".cleaned.json")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    if cache.exists():
+    digest = hashlib.sha256(path.read_bytes()).hexdigest() if cache.exists() else None
+    if digest:
         saved = json.loads(cache.read_text())
         if saved["sha256"] == digest:
             if on_progress:
                 on_progress(saved["progress"])
             return CleanedDataset.model_validate(saved["dataset"])
+    sources = collect_sources(path)
+    if not sources.documents:
+        return assemble_dataset(sources, [], 0, [])
     values = {}
     for field in DocumentOptions.model_fields:
         name = "AUTOTUNE_DOCUMENT_" + field.upper()
@@ -37,8 +38,8 @@ def load_dataset(path: Path, on_progress: Callable[[dict[str, int]], None] | Non
         if on_progress:
             on_progress(update)
 
-    dataset = DocumentIngestor(document_endpoint(), options=DocumentOptions(**values), on_progress=report).sanitize(path)
-    payload = {"sha256": digest, "dataset": dataset.model_dump(mode="json"), "progress": progress}
+    dataset = DocumentIngestor(document_endpoint(), options=DocumentOptions(**values), on_progress=report).ingest(sources)
+    payload = {"sha256": digest or hashlib.sha256(path.read_bytes()).hexdigest(), "dataset": dataset.model_dump(mode="json"), "progress": progress}
     temporary = cache.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload), encoding="utf-8")
     temporary.replace(cache)

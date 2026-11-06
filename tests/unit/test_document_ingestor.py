@@ -110,14 +110,14 @@ def test_token_chunks_have_overlap():
 
 
 def test_html_ignores_scripts_and_extracts_content():
-    from autotune.infrastructure.sanitizers.document_ingestor import extract_text
+    from autotune.infrastructure.sanitizers.document_text import extract_text
     assert extract_text('page.html', b'<style>hidden</style><p>Public policy</p><script>secret</script>') == 'Public policy'
 
 
 def test_word_extracts_paragraphs_and_tables():
     import io
     from docx import Document
-    from autotune.infrastructure.sanitizers.document_ingestor import extract_text
+    from autotune.infrastructure.sanitizers.document_text import extract_text
     document = Document()
     document.add_paragraph('Public policy')
     document.add_table(rows=1, cols=1).cell(0, 0).text = 'Daily review'
@@ -129,7 +129,7 @@ def test_word_extracts_paragraphs_and_tables():
 def test_blank_pdf_needs_ocr():
     import io
     from pypdf import PdfWriter
-    from autotune.infrastructure.sanitizers.document_ingestor import extract_text
+    from autotune.infrastructure.sanitizers.document_text import extract_text
     writer = PdfWriter()
     writer.add_blank_page(width=100, height=100)
     buffer = io.BytesIO()
@@ -140,19 +140,19 @@ def test_blank_pdf_needs_ocr():
 
 def test_missing_extras_names_install_command(monkeypatch):
     import sys
-    from autotune.infrastructure.sanitizers.document_ingestor import extract_text
+    from autotune.infrastructure.sanitizers.document_text import extract_text
     monkeypatch.setitem(sys.modules, 'pypdf', None)
     with pytest.raises(RuntimeError, match='uv sync --extra documents'):
         extract_text('policy.txt', b'policy')
 
 
 @pytest.mark.parametrize('verdict', ['{"supported": "true"}', 'not json'])
-def test_invalid_grounding_reply_fails_whole_upload(tmp_path, verdict):
-    from autotune.infrastructure.evaluators.openai_client import ModelCallError
+def test_invalid_grounding_reply_twice_drops_the_pair(tmp_path, verdict):
+    from autotune.core.ports.sanitizer import IngestionError
     path = tmp_path / 'policy.md'
     path.write_text('The safety policy requires daily review.')
-    with pytest.raises(ModelCallError):
-        ingestor([pair('safety'), verdict]).sanitize(path)
+    with pytest.raises(IngestionError, match='grounding check returned malformed JSON twice'):
+        ingestor([pair('safety'), verdict, verdict]).sanitize(path)
 
 
 def test_document_key_placeholder_is_rejected(monkeypatch):

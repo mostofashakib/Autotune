@@ -80,7 +80,7 @@ def test_an_upload_name_that_is_a_path_is_rejected(client, isolated_data_dir, na
 def test_an_unparseable_upload_is_rejected_and_not_kept(client, isolated_data_dir):
     response = client.post("/api/dataset/upload", files={"file": ("broken.jsonl", "not json at all\n")})
 
-    assert response.status_code == 400
+    assert response.status_code == 422
     assert not (isolated_data_dir / "uploads" / "broken.jsonl").exists()
 
 

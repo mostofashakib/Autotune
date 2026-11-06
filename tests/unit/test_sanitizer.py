@@ -85,3 +85,52 @@ def test_nested_messages_in_tabular_data(tmp_path, extension, kind):
     if extension == 'csv': frame.to_csv(path, index=False)
     else: frame.to_parquet(path, index=False)
     assert AutoFormatSanitizer().sanitize(path).task_type == kind
+
+
+def _conversation(tmp_path, name, data):
+    path = tmp_path / name
+    path.write_bytes(data if isinstance(data, bytes) else data.encode())
+    record = AutoFormatSanitizer().sanitize(path, val_split_ratio=0).train_records[0]
+    return [(m.role, m.content) for m in record.messages]
+
+
+@pytest.mark.parametrize("columns", [("user", "assistant"), ("input", "output"), ("query", "response"),
+                                     ("question", "response"), ("prompt", "answer")])
+def test_prompt_and_response_column_aliases(tmp_path, columns):
+    rows = f"{columns[0]},{columns[1]}\nhi,there\n"
+    assert _conversation(tmp_path, "rows.csv", rows) == [("user", "hi"), ("assistant", "there")]
+
+
+def test_alpaca_input_stays_context_when_instruction_present(tmp_path):
+    row = json.dumps({"instruction": "Summarize", "input": "Long text", "output": "Short"})
+    assert _conversation(tmp_path, "rows.jsonl", row) == [("user", "Summarize\n\nContext: Long text"), ("assistant", "Short")]
+
+
+def test_sharegpt_conversations(tmp_path):
+    row = json.dumps({"conversations": [{"from": "system", "value": "Be brief"}, {"from": "human", "value": "hi"},
+                                        {"from": "gpt", "value": "yo"}]})
+    assert _conversation(tmp_path, "rows.jsonl", row) == [("system", "Be brief"), ("user", "hi"), ("assistant", "yo")]
+
+
+@pytest.mark.parametrize("user, assistant", [("human", "bot"), ("user", "model"), ("User", "AI")])
+def test_role_aliases(tmp_path, user, assistant):
+    row = json.dumps({"messages": [{"role": user, "content": "hi"}, {"role": assistant, "content": "yo"}]})
+    assert _conversation(tmp_path, "rows.jsonl", row) == [("user", "hi"), ("assistant", "yo")]
+
+
+def test_content_parts_join_their_text(tmp_path):
+    row = json.dumps({"messages": [{"role": "user", "content": [{"type": "text", "text": "hi"}, {"type": "text", "text": "there"}]},
+                                   {"role": "assistant", "content": "yo"}]})
+    assert _conversation(tmp_path, "rows.jsonl", row) == [("user", "hi\nthere"), ("assistant", "yo")]
+
+
+@pytest.mark.parametrize("key", ["data", "rows", "records", "examples", "items", "train"])
+def test_json_object_wrapping_rows_is_unwrapped(tmp_path, key):
+    rows = json.dumps({"version": 2, key: [{"prompt": "hi", "completion": "yo"}]})
+    assert _conversation(tmp_path, "rows.json", rows) == [("user", "hi"), ("assistant", "yo")]
+
+
+@pytest.mark.parametrize("sep", [";", "|", "\t"])
+def test_csv_delimiter_is_detected(tmp_path, sep):
+    rows = f"prompt{sep}completion\nhi, friend{sep}yo, pal\n"
+    assert _conversation(tmp_path, "rows.csv", rows) == [("user", "hi, friend"), ("assistant", "yo, pal")]

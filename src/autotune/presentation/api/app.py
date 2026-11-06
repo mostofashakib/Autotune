@@ -17,12 +17,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from autotune.core.domain.models import (
-    CleanedDataset,
     JobStatus,
     ModelEndpoint,
     QuantizationMethod,
     RunPodConfig,
-    TaskType,
     TrainingJob,
     Recipe,
     TrainingObjective,
@@ -34,6 +32,7 @@ from autotune.core.services.recipe_selector import AutoRecipeSelector
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend, training_rows
 from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
+from autotune.core.ports.sanitizer import IngestionError
 from autotune.core.ports.evaluator import BenchmarkRunner
 from autotune.core.ports.trainer import TrainingBackend
 from autotune.infrastructure.evaluators.comparison import run_comparison, write_report
@@ -42,7 +41,6 @@ from autotune.infrastructure.evaluators.harbor_benchmark import HarborBenchmark,
 from autotune.infrastructure.evaluators.judge import JudgeError, LLMJudge
 from autotune.infrastructure.evaluators.openai_client import ModelCallError, OpenAIChatClient
 from autotune.infrastructure.sanitizers.dataset_loader import MalformedExportError, load_sft
-from autotune.infrastructure.sanitizers.format_normalizer import AutoFormatSanitizer
 from autotune.infrastructure.serving.vllm_provider import VLLMServingProvider
 from autotune.infrastructure.storage.job_store import JobStore
 from autotune.presentation.api.dataset_ingestion import load_dataset
@@ -325,6 +323,8 @@ def create_app() -> FastAPI:
             return JSONResponse(status_code=202, content={"job_id": state["job_id"]})
         try:
             return await asyncio.to_thread(inspect_upload, dest_path, state)
+        except IngestionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Failed to parse dataset: {exc}") from exc
 
