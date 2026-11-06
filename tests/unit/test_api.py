@@ -104,3 +104,18 @@ def test_training_finds_an_uploaded_dataset_by_its_name(client, monkeypatch):
 
     assert response.status_code == 202
     assert response.json()["job_id"]
+
+
+@pytest.mark.parametrize("vram", [0, 36, 48])
+def test_status_quantization_matches_default_model(client, monkeypatch, vram):
+    from types import SimpleNamespace
+    from autotune.core.domain.models import TaskType
+    from autotune.core.domain.model_catalog import default_model, fitting_quantization
+    from autotune.presentation.api import app as api
+    monkeypatch.setattr(api, "build_hardware_probe", lambda: SimpleNamespace(available_vram_gb=lambda: vram))
+    fit = fitting_quantization(default_model(TaskType.CHAT, vram)[0], vram)
+
+    response = client.get("/api/system/status")
+
+    assert response.json()["recommended_quantization"] == (fit.value if fit else "none")
+    assert response.json()["recommended_quantization"] == {0: "none", 36: "qlora_4bit_nf4", 48: "lora_16bit"}[vram]

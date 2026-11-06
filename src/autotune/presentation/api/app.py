@@ -24,11 +24,12 @@ from autotune.core.domain.models import (
     TrainingJob,
     Recipe,
     TrainingObjective,
+    TaskType,
     TrainingProgress,
 )
 from autotune.core.domain.limits import MAX_UPLOAD_BYTES
 from autotune.core.domain.training_settings import TrainingIntensity, intensity_recipes, validate_training_recipe
-from autotune.core.domain.model_catalog import catalog_for_vram
+from autotune.core.domain.model_catalog import catalog_for_vram, default_model, fitting_quantization
 from autotune.core.services.recipe_selector import AutoRecipeSelector
 from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend, training_rows
 from autotune.infrastructure.models.hub_metadata import resolve_model
@@ -120,6 +121,15 @@ def _benchmark_summary(record: dict[str, Any]) -> dict[str, Any]:
         "delta_pass_at_1": report["delta_pass_at_1"],
     }
     return {**_summary(record), "headline": headline}
+
+
+def recommended_quantization(vram: float) -> str:
+    """Quantization of the default chat model for this VRAM, or "none" when nothing fits."""
+    try:
+        quantization = fitting_quantization(default_model(TaskType.CHAT, vram)[0], vram)
+    except ValueError:
+        return "none"
+    return quantization.value if quantization else "none"
 
 
 def _now() -> str:
@@ -272,7 +282,7 @@ def create_app() -> FastAPI:
             "vram_gb": round(vram, 2),
             "cuda_available": has_cuda,
             "device": "CUDA" if has_cuda else "CPU / no CUDA",
-            "recommended_quantization": "qlora_4bit_nf4" if vram <= 32 else "lora_16bit",
+            "recommended_quantization": recommended_quantization(vram),
         }
 
     def inspect_upload(dest_path: Path, state: dict[str, Any]) -> dict[str, Any]:

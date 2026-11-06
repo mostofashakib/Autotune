@@ -3,9 +3,92 @@ from __future__ import annotations
 
 import math
 from autotune.core.domain.limits import GRPO_MAX_LEARNING_RATE, require_valid_vram
-from autotune.core.domain.model_catalog import MODELS, ModelSpec, fitting_quantization, get_model, memory_baseline
+from autotune.core.domain.model_catalog import ModelSpec, default_model, fitting_quantization, get_model, memory_baseline
 from autotune.core.domain.training_settings import estimate_memory_gb, validate_training_recipe
 from autotune.core.domain.models import CleanedDataset, QuantizationMethod, Recipe, TaskType, TrainingObjective
+
+
+def choose_objective(task_type: TaskType, forced: TrainingObjective | None) -> TrainingObjective:
+    """Use the forced objective, otherwise the one the task type implies."""
+    if forced is not None:
+        return forced
+    if task_type == TaskType.RL_GRPO:
+        return TrainingObjective.GRPO
+    if task_type == TaskType.PREFERENCE:
+        return TrainingObjective.DPO
+    return TrainingObjective.SFT
+
+
+def base_hyperparameters(total_samples: int, vram: float, objective: TrainingObjective) -> dict[str, float | int]:
+    """Scale LoRA rank, learning rate, epochs, and batch size to dataset volume and VRAM."""
+    if total_samples < 500:
+        # Few-shot fine-tuning: higher rank to capture nuances, lower LR to prevent collapse
+        params: dict[str, float | int] = {"lora_r": 32, "lora_alpha": 64, "learning_rate": 1e-4, "epochs": 4,
+                                          "batch_size": 2 if vram >= 16.0 else 1, "gradient_accumulation_steps": 8}
+    elif total_samples < 5000:
+        # Medium dataset: standard stable defaults
+        params = {"lora_r": 16, "lora_alpha": 32, "learning_rate": 2e-4, "epochs": 3,
+                  "batch_size": 4 if vram >= 24.0 else 2, "gradient_accumulation_steps": 4}
+    else:
+        # Large dataset: lower rank for efficiency, fewer epochs to prevent overfitting
+        params = {"lora_r": 16, "lora_alpha": 32, "learning_rate": 3e-4, "epochs": 2,
+                  "batch_size": 8 if vram >= 32.0 else 4, "gradient_accumulation_steps": 2}
+    if objective == TrainingObjective.GRPO:
+        params["learning_rate"] = min(params["learning_rate"], GRPO_MAX_LEARNING_RATE)
+    return params
+
+
+def _resolve_model(dataset: CleanedDataset, vram: float, forced_model: str | None,
+                   model_spec: ModelSpec | None) -> tuple[ModelSpec, list[ModelSpec]]:
+    if not forced_model:
+        return default_model(dataset.task_type, vram)
+    model = get_model(forced_model) or model_spec
+    if model is None or model.hf_id != forced_model:
+        raise ValueError(f"Unknown parameter count for {forced_model}. Resolve its Hugging Face metadata before selecting a recipe.")
+    return model, []
+
+
+def _resolve_quantization(model: ModelSpec, vram: float, forced: QuantizationMethod | None) -> QuantizationMethod:
+    quantization = forced or (fitting_quantization(model, vram) if vram else QuantizationMethod.NONE)
+    if quantization is None:
+        raise ValueError(f"{model.hf_id} needs ~{model.qlora_min_vram_gb:g}GB VRAM with QLoRA. Choose a smaller model or larger GPU.")
+    if vram and memory_baseline(model.parameters_b, quantization) > vram:
+        raise ValueError(f"{model.hf_id} does not fit {vram:g}GB VRAM at {quantization.value}. Select QLoRA or a smaller model.")
+    return quantization
+
+
+def _shrink_batch(recipe: Recipe, model: ModelSpec, vram: float) -> Recipe:
+    """Lower the batch size until memory fits, keeping the effective batch size."""
+    original_batch = recipe.batch_size
+    while recipe.batch_size > 1 and estimate_memory_gb(recipe, model) > vram:
+        recipe = recipe.model_copy(update={"batch_size": recipe.batch_size - 1})
+    accumulation = math.ceil(recipe.gradient_accumulation_steps * original_batch / recipe.batch_size)
+    return recipe.model_copy(update={"gradient_accumulation_steps": accumulation})
+
+
+def _fall_back_to_smaller_model(recipe: Recipe, model: ModelSpec, candidates: list[ModelSpec], vram: float,
+                                forced_quantization: QuantizationMethod | None) -> tuple[Recipe, ModelSpec]:
+    smaller = [m for m in candidates if m.parameter_count < model.parameter_count]
+    for candidate in sorted(smaller, key=lambda m: m.parameter_count, reverse=True):
+        trial = recipe.model_copy(update={"base_model": candidate.hf_id,
+                                          "quantization": forced_quantization or fitting_quantization(candidate, vram)})
+        if estimate_memory_gb(trial, candidate) <= vram:
+            return trial, candidate
+    return recipe, model
+
+
+def fit_to_memory(recipe: Recipe, model: ModelSpec, candidates: list[ModelSpec], vram: float, *,
+                  forced_quantization: QuantizationMethod | None,
+                  forced_model: str | None) -> tuple[Recipe, ModelSpec]:
+    """Shrink batch size, then quantize, then pick a smaller model until the estimate fits VRAM."""
+    if not vram:
+        return recipe, model
+    recipe = _shrink_batch(recipe, model, vram)
+    if not forced_quantization and estimate_memory_gb(recipe, model) > vram:
+        recipe = recipe.model_copy(update={"quantization": QuantizationMethod.QLORA_4BIT_NF4})
+    if not forced_model and estimate_memory_gb(recipe, model) > vram:
+        recipe, model = _fall_back_to_smaller_model(recipe, model, candidates, vram, forced_quantization)
+    return recipe, model
 
 
 class AutoRecipeSelector:
@@ -24,98 +107,14 @@ class AutoRecipeSelector:
     ) -> Recipe:
         """Derive an optimal training recipe based on dataset characteristics and hardware."""
         vram = available_vram_gb
-        total_samples = dataset.total_records
-
-        # 1. Objective selection
-        if forced_objective is not None:
-            objective = forced_objective
-        elif dataset.task_type == TaskType.RL_GRPO:
-            objective = TrainingObjective.GRPO
-        elif dataset.task_type == TaskType.PREFERENCE:
-            objective = TrainingObjective.DPO
-        else:
-            objective = TrainingObjective.SFT
-
+        objective = choose_objective(dataset.task_type, forced_objective)
         require_valid_vram(vram)
-        if forced_model:
-            model = get_model(forced_model) or model_spec
-            if model is None or model.hf_id != forced_model:
-                raise ValueError(f"Unknown parameter count for {forced_model}. Resolve its Hugging Face metadata before selecting a recipe.")
-        else:
-            candidates = [m for m in MODELS if not m.gated and
-                          (dataset.task_type != TaskType.TOOL_USE or m.supports_tool_calling) and
-                          (vram == 0 or fitting_quantization(m, vram) is not None)]
-            if not candidates:
-                raise ValueError("No catalog model fits this GPU. Use a GPU with at least 5GB VRAM for QLoRA.")
-            # No GPU still permits inspection. Training's GPU check refuses execution.
-            model = max(candidates, key=lambda m: m.parameter_count) if vram else get_model("Qwen/Qwen2.5-1.5B-Instruct")
-        base_model = model.hf_id
-        quantization = forced_quantization or (fitting_quantization(model, vram) if vram else QuantizationMethod.NONE)
-        if quantization is None:
-            raise ValueError(f"{base_model} needs ~{model.qlora_min_vram_gb:g}GB VRAM with QLoRA. Choose a smaller model or larger GPU.")
-        if vram and memory_baseline(model.parameters_b, quantization) > vram:
-            raise ValueError(f"{base_model} does not fit {vram:g}GB VRAM at {quantization.value}. Select QLoRA or a smaller model.")
-
-        # 3. Hyperparameters based on dataset volume
-        if total_samples < 500:
-            # Few-shot fine-tuning: higher rank to capture nuances, lower LR to prevent collapse
-            lora_r = 32
-            lora_alpha = 64
-            learning_rate = 1e-4
-            epochs = 4
-            batch_size = 2 if vram >= 16.0 else 1
-            grad_accum = 8
-        elif total_samples < 5000:
-            # Medium dataset: standard stable defaults
-            lora_r = 16
-            lora_alpha = 32
-            learning_rate = 2e-4
-            epochs = 3
-            batch_size = 4 if vram >= 24.0 else 2
-            grad_accum = 4
-        else:
-            # Large dataset: lower rank for efficiency, fewer epochs to prevent overfitting
-            lora_r = 16
-            lora_alpha = 32
-            learning_rate = 3e-4
-            epochs = 2
-            batch_size = 8 if vram >= 32.0 else 4
-            grad_accum = 2
-
-        if objective == TrainingObjective.GRPO:
-            learning_rate = min(learning_rate, GRPO_MAX_LEARNING_RATE)
-
-        recipe = Recipe(
-            base_model=base_model,
-            objective=objective,
-            quantization=quantization,
-            lora_r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=0.05,
-            learning_rate=learning_rate,
-            batch_size=batch_size,
-            gradient_accumulation_steps=grad_accum,
-            epochs=epochs,
-            max_seq_length=2048,
-            warmup_ratio=0.05,
-            grpo_group_size=4,
-            grpo_epsilon=0.2,
-        )
-
-        if vram:
-            original_batch = recipe.batch_size
-            while recipe.batch_size > 1 and estimate_memory_gb(recipe, model) > vram:
-                recipe = recipe.model_copy(update={"batch_size": recipe.batch_size - 1})
-            recipe = recipe.model_copy(update={"gradient_accumulation_steps": math.ceil(grad_accum * original_batch / recipe.batch_size)})
-            if not forced_quantization and estimate_memory_gb(recipe, model) > vram:
-                recipe = recipe.model_copy(update={"quantization": QuantizationMethod.QLORA_4BIT_NF4})
-            if not forced_model and estimate_memory_gb(recipe, model) > vram:
-                smaller = [m for m in candidates if m.parameter_count < model.parameter_count]
-                for candidate in sorted(smaller, key=lambda m: m.parameter_count, reverse=True):
-                    trial = recipe.model_copy(update={"base_model": candidate.hf_id, "quantization": forced_quantization or fitting_quantization(candidate, vram)})
-                    if estimate_memory_gb(trial, candidate) <= vram:
-                        recipe, model = trial, candidate
-                        break
-            if validate_memory:
-                validate_training_recipe(recipe, model, vram)
+        model, candidates = _resolve_model(dataset, vram, forced_model, model_spec)
+        quantization = _resolve_quantization(model, vram, forced_quantization)
+        recipe = Recipe(base_model=model.hf_id, objective=objective, quantization=quantization,
+                        **base_hyperparameters(dataset.total_records, vram, objective))
+        recipe, model = fit_to_memory(recipe, model, candidates, vram,
+                                      forced_quantization=forced_quantization, forced_model=forced_model)
+        if vram and validate_memory:
+            validate_training_recipe(recipe, model, vram)
         return recipe

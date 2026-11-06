@@ -107,3 +107,7 @@ def test_final_overrides_are_applied_before_memory_validation(tmp_path, monkeypa
     response = TestClient(api.create_app()).post('/api/training/start', json={
         'dataset_name':str(path), 'base_model':'Qwen/Qwen2.5-14B-Instruct', 'lora_r':16, 'batch_size':1})
     assert response.status_code == 202, response.text
+
+
+def test_recipe_default_warmup_is_005():
+    assert recipe().warmup_ratio == 0.05

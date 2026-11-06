@@ -71,7 +71,7 @@ class Recipe(BaseModel):
     gradient_accumulation_steps: int = 8
     epochs: int = 3
     max_seq_length: int = 2048
-    warmup_ratio: float = 0.03
+    warmup_ratio: float = 0.05
     # GRPO Specific Settings
     grpo_group_size: int = 4
     grpo_epsilon: float = 0.2

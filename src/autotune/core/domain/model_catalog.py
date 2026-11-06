@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from dataclasses import asdict, dataclass
 from autotune.core.domain.limits import require_valid_vram
-from autotune.core.domain.models import QuantizationMethod
+from autotune.core.domain.models import QuantizationMethod, TaskType
 
 
 @dataclass(frozen=True)
@@ -74,6 +74,21 @@ def fitting_quantization(model: ModelSpec, vram: float) -> QuantizationMethod | 
     if vram >= model.qlora_min_vram_gb:
         return QuantizationMethod.QLORA_4BIT_NF4
     return None
+
+
+CPU_INSPECTION_MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+
+
+def default_model(task_type: TaskType, vram: float) -> tuple[ModelSpec, list[ModelSpec]]:
+    """Pick the default model for a task and return it with every fitting candidate."""
+    candidates = [m for m in MODELS if not m.gated and
+                  (task_type != TaskType.TOOL_USE or m.supports_tool_calling) and
+                  (vram == 0 or fitting_quantization(m, vram) is not None)]
+    if not candidates:
+        raise ValueError("No catalog model fits this GPU. Use a GPU with at least 5GB VRAM for QLoRA.")
+    # No GPU still permits inspection. Training's GPU check refuses execution.
+    pick = max(candidates, key=lambda m: m.parameter_count) if vram else get_model(CPU_INSPECTION_MODEL_ID)
+    return pick, candidates
 
 
 def catalog_for_vram(vram: float) -> list[dict]:
