@@ -1,12 +1,15 @@
 """Cloud GPU endpoints report RunPod's real answers or fail. They never invent a catalog or a pod."""
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from autotune import settings
 from autotune.core.domain.models import RunPodInstance
 from autotune.presentation.api import app as api
+from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.presentation.api.routes import cloud
 
 
@@ -177,25 +180,33 @@ def test_a_stopped_pod_is_listed_as_terminated_without_asking_runpod(client, sta
 
 def test_cloud_routes_take_no_key_in_query(client, monkeypatch):
     monkeypatch.setenv("RUNPOD_API_KEY", "rp-live-123")
-    fake = StatusRunPod()
-    fake.list_available_gpus = lambda: []
-    fake.stop_instance = lambda pod_id: True
-    fake.create_instance = lambda config: RunPodInstance(pod_id="p1", name="t", status="RUNNING", gpu_name="g")
-    keys_received = []
+    requests = []
 
-    def recording_provider(api_key=None):
-        keys_received.append(api_key)
-        return fake
+    def recorder(method, url, headers=None, body=None):
+        requests.append((method, url, headers, body))
+        query = json.loads(body)["query"]
+        if "gpuTypes" in query:
+            data = {"gpuTypes": []}
+        elif "podFindAndDeployOnDemand" in query:
+            data = {"podFindAndDeployOnDemand": {"id": "p1", "name": "t", "desiredStatus": "RUNNING"}}
+        elif "podTerminate" in query:
+            data = {"podTerminate": None}
+        else:
+            data = {"pod": {"id": "p1", "name": "t", "desiredStatus": "RUNNING"}}
+        return 200, json.dumps({"data": data}).encode()
 
-    monkeypatch.setattr(cloud, "RunPodCloudProvider", recording_provider)
-    client.post("/api/cloud/launch", json={})
-    keys_received.clear()
+    monkeypatch.setattr(cloud, "RunPodCloudProvider", lambda api_key=None: RunPodCloudProvider(api_key=api_key, request_fn=recorder))
+    assert client.post("/api/cloud/launch", json={}).status_code == 200
+    requests.clear()
 
     paths = client.get("/openapi.json").json()["paths"]
     for method, path in [("get", "/api/cloud/gpus"), ("get", "/api/cloud/pods"), ("post", "/api/cloud/stop/{pod_id}")]:
         assert [p for p in paths[path][method].get("parameters", []) if p["name"] == "api_key"] == []
 
     for method, path in [("get", "/api/cloud/gpus"), ("get", "/api/cloud/pods"), ("post", "/api/cloud/stop/p1")]:
+        before = len(requests)
         assert client.request(method, f"{path}?api_key=secret").status_code == 200
+        assert len(requests) > before, f"{path} made no RunPod request"
 
-    assert keys_received and "secret" not in keys_received
+    assert all(headers["Authorization"] == "Bearer rp-live-123" for _, _, headers, _ in requests)
+    assert "secret" not in repr(requests)
