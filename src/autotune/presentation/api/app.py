@@ -22,16 +22,15 @@ from autotune.core.domain.models import (
     QuantizationMethod,
     RunPodConfig,
     TrainingJob,
-    Recipe,
     TrainingObjective,
     TaskType,
     TrainingProgress,
 )
 from autotune.core.domain.limits import MAX_UPLOAD_BYTES
-from autotune.core.domain.training_settings import TrainingIntensity, intensity_recipes, validate_training_recipe
+from autotune.core.domain.training_settings import TrainingIntensity
 from autotune.core.domain.model_catalog import catalog_for_vram, default_model, fitting_quantization
-from autotune.core.services.recipe_selector import AutoRecipeSelector
-from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend, training_rows
+from autotune.core.services.training_planner import TUNABLE_FIELDS, TrainingPlan, TrainingPlanner, TrainingRequest
+from autotune.infrastructure.backends.trl_peft_backend import TrlPeftBackend
 from autotune.infrastructure.models.hub_metadata import resolve_model
 from autotune.infrastructure.cloud.runpod_provider import RunPodCloudProvider
 from autotune.core.ports.hardware import HardwareProbe
@@ -144,6 +143,23 @@ def build_training_backend() -> TrainingBackend:
 def build_hardware_probe() -> HardwareProbe:
     """The probe that reads the GPU this server trains on."""
     return CudaProbe()
+
+
+def _training_planner() -> TrainingPlanner:
+    """A planner on the probe `build_hardware_probe` returns right now."""
+    return TrainingPlanner(build_hardware_probe(), resolve_model)
+
+
+def _training_request(req: TrainingStartRequest) -> TrainingRequest:
+    fields = req.model_dump()
+    return TrainingRequest(
+        base_model=req.base_model, objective=req.objective, quantization=req.quantization,
+        intensity=req.intensity,
+        overrides={name: fields[name] for name in TUNABLE_FIELDS if fields[name] is not None})
+
+
+def presets_payload(plan: TrainingPlan) -> dict[str, dict]:
+    return {name: preset.model_dump(mode="json") for name, preset in plan.presets.items()}
 
 
 def _uploads_dir() -> Path:
@@ -292,14 +308,14 @@ def create_app() -> FastAPI:
 
         try:
             cleaned = load_dataset(dest_path, progress)
-            recipe = AutoRecipeSelector().select_recipe(cleaned, available_vram_gb=build_hardware_probe().available_vram_gb())
+            plan = _training_planner().recommend(cleaned, TrainingRequest())
             result = {
                 "file_name": dest_path.name, "file_path": str(dest_path),
                 "task_type": cleaned.task_type.value, "total_records": cleaned.total_records,
                 "train_records": len(cleaned.train_records), "val_records": len(cleaned.val_records),
                 "dropped_count": cleaned.dropped_count, "warnings": cleaned.warnings,
-                "recipe": recipe.model_dump(mode="json"), "progress": state["progress"],
-                "presets": {name: r.model_dump(mode="json") for name, r in intensity_recipes(recipe).items()},
+                "recipe": plan.recipe.model_dump(mode="json"), "progress": state["progress"],
+                "presets": presets_payload(plan),
                 "preview": [{
                     "prompt": r.prompt or (r.messages[0].content if r.messages else ""),
                     "completion": r.completions[0] if r.completions else (r.messages[-1].content if len(r.messages) > 1 else ""),
@@ -356,12 +372,8 @@ def create_app() -> FastAPI:
     async def recommend_recipe(req: TrainingStartRequest) -> dict[str, Any]:
         try:
             dataset = load_dataset(_resolve_dataset(req.dataset_name))
-            model = resolve_model(req.base_model) if req.base_model else None
-            recipe = AutoRecipeSelector().select_recipe(
-                dataset, available_vram_gb=build_hardware_probe().available_vram_gb(),
-                forced_model=req.base_model, forced_objective=req.objective, model_spec=model)
-            return {"recipe": recipe.model_dump(mode="json"),
-                    "presets": {name: r.model_dump(mode="json") for name, r in intensity_recipes(recipe).items()}}
+            plan = _training_planner().recommend(dataset, _training_request(req))
+            return {"recipe": plan.recipe.model_dump(mode="json"), "presets": presets_payload(plan)}
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -373,22 +385,9 @@ def create_app() -> FastAPI:
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"could not parse dataset: {exc}") from exc
         try:
-            selector = AutoRecipeSelector()
-            vram = build_hardware_probe().available_vram_gb()
-            model = resolve_model(req.base_model) if req.base_model else None
-            recommended = selector.select_recipe(cleaned, forced_model=req.base_model,
-                                                  forced_quantization=req.quantization,
-                                                  forced_objective=req.objective,
-                                                  available_vram_gb=vram, model_spec=model, validate_memory=False)
-            selected = intensity_recipes(recommended)[req.intensity]
-            overrides = {key: value for key, value in req.model_dump().items()
-                         if key in ("lora_r", "lora_alpha", "learning_rate", "epochs", "batch_size",
-                                    "gradient_accumulation_steps", "max_seq_length") and value is not None}
-            recipe = Recipe.model_validate({**selected.model_dump(), **overrides})
-            model = model or resolve_model(recipe.base_model)
-            validate_training_recipe(recipe, model, vram)
-            training_rows(cleaned.train_records + cleaned.val_records, recipe.objective)
-            if model.gated:
+            plan = _training_planner().plan(cleaned, _training_request(req))
+            recipe = plan.recipe
+            if plan.model.gated:
                 require_credential(HF_TOKEN)
         except (ValueError, CredentialNotConfigured) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

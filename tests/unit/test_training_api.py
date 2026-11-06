@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -125,6 +126,20 @@ def test_the_simulated_mock_mode_is_gone(client, dataset, tmp_path, monkeypatch)
 
     assert job["status"] == "failed"
     assert job["loss_history"] == []
+
+
+def test_recommend_and_start_agree_on_forced_quantization(client, dataset, tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "build_hardware_probe", lambda: SimpleNamespace(available_vram_gb=lambda: 48))
+    monkeypatch.setattr(api, "build_training_backend", lambda: FakeBackend())
+    body = {"dataset_name": str(dataset), "base_model": "Qwen/Qwen2.5-0.5B-Instruct",
+            "quantization": "qlora_4bit_nf4", "output_dir": str(tmp_path / "ckpt")}
+    recommended = client.post("/api/recipe/recommend", json=body)
+    started = client.post("/api/training/start", json=body)
+    assert recommended.status_code == 200, recommended.text
+    assert started.status_code == 202, started.text
+    job = _wait(client, started.json()["job_id"])
+    assert recommended.json()["recipe"]["quantization"] == "qlora_4bit_nf4"
+    assert job["recipe"]["quantization"] == "qlora_4bit_nf4"
 
 
 def test_an_unknown_job_is_404(client):
