@@ -28,6 +28,26 @@ def test_text_without_json_is_malformed():
         parse_json_reply("no json here")
 
 
+def test_an_array_followed_by_a_bracket_in_prose_keeps_the_array():
+    assert parse_json_reply('[{"a":1}] see [1]') == [{"a": 1}]
+
+
+def test_the_first_of_two_objects_in_prose_is_returned():
+    assert parse_json_reply('Result: {"a": 1} and {"b": 2}') == {"a": 1}
+
+
+def test_a_fence_followed_by_prose_returns_the_fenced_value():
+    assert parse_json_reply('```json\n{"a": 1}\n```\nSee {braces} here') == {"a": 1}
+
+
+def test_nested_braces_parse():
+    assert parse_json_reply('x {"a": {"b": [1, {"c": 2}]}} y') == {"a": {"b": [1, {"c": 2}]}}
+
+
+def test_braces_inside_strings_parse():
+    assert parse_json_reply('x {"a": "}{"} y') == {"a": "}{"}
+
+
 def test_a_non_string_reply_is_malformed():
     with pytest.raises(MalformedReply):
         parse_json_reply(None)  # type: ignore[arg-type]

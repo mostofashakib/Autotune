@@ -9,7 +9,7 @@ from typing import Any
 from autotune.infrastructure.evaluators.openai_client import ModelCallError
 
 _FENCED_BLOCK = re.compile(r"```[\w-]*\s*\n(.*?)\n?\s*```", re.DOTALL)
-_SPANS = (re.compile(r"\{.*\}", re.DOTALL), re.compile(r"\[.*\]", re.DOTALL))
+_OPENERS = re.compile(r"[{\[]")
 
 
 class MalformedReply(ModelCallError):
@@ -20,17 +20,25 @@ def _candidates(text: str) -> Iterator[str]:
     yield text.strip()
     for block in _FENCED_BLOCK.finditer(text):
         yield block.group(1)
-    spans = [match for match in (pattern.search(text) for pattern in _SPANS) if match]
-    for span in sorted(spans, key=lambda match: match.start()):
-        yield span.group(0)
+
+
+def _first_embedded_value(text: str) -> Any:
+    decoder = json.JSONDecoder()
+    for opener in _OPENERS.finditer(text):
+        try:
+            return decoder.raw_decode(text, opener.start())[0]
+        except ValueError:
+            continue
+    raise MalformedReply("model reply does not contain valid JSON")
 
 
 def parse_json_reply(text: str) -> Any:
-    """Parse the whole reply, else a fenced block, else the outermost object or array span."""
-    if isinstance(text, str):
-        for candidate in _candidates(text):
-            try:
-                return json.loads(candidate)
-            except ValueError:
-                continue
-    raise MalformedReply("model reply does not contain valid JSON")
+    """Parse the whole reply, else a fenced block, else the first JSON value embedded in prose."""
+    if not isinstance(text, str):
+        raise MalformedReply("model reply does not contain valid JSON")
+    for candidate in _candidates(text):
+        try:
+            return json.loads(candidate)
+        except ValueError:
+            continue
+    return _first_embedded_value(text)

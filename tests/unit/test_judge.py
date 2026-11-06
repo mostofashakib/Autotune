@@ -44,6 +44,11 @@ def test_an_unusable_verdict_fails(reply):
         LLMJudge(FakeClient(reply), JUDGE).score("p", "r", "a")
 
 
+def test_a_reply_without_json_is_reported_as_not_a_json_score():
+    with pytest.raises(JudgeError, match="not a JSON score"):
+        LLMJudge(FakeClient("no json"), JUDGE).score("p", "r", "a")
+
+
 def test_a_judge_that_cannot_be_reached_fails():
     with pytest.raises(ModelCallError):
         LLMJudge(FakeClient(ModelCallError("down")), JUDGE).score("p", "r", "a")
